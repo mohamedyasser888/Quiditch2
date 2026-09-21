@@ -28,7 +28,7 @@ BEGIN
   IF v_matches >= 1 THEN PERFORM unlock_achievement(p_user_id, 'First Flight'); END IF;
   IF v_wins >= 1 THEN PERFORM unlock_achievement(p_user_id, 'First Victory'); END IF;
   IF v_saves >= 10 THEN PERFORM unlock_achievement(p_user_id, 'Keeper''s Wall'); END IF;
-  IF v_score >= 1000 THEN PERFORM unlock_achievement(p_user_id, 'Chaser''s Glory'); END IF;
+  IF v_score >= 100 THEN PERFORM unlock_achievement(p_user_id, 'Chaser''s Glory'); END IF;
   IF v_team_matches >= 10 THEN PERFORM unlock_achievement(p_user_id, 'Team Player'); END IF;
   IF v_wins >= 10 THEN PERFORM unlock_achievement(p_user_id, 'Quidditch Champion'); END IF;
 

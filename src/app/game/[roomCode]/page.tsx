@@ -390,8 +390,7 @@ function triggerSnitchEncounterPhase(s: GS): Partial<GS> {
 function ensureSnitchWaitActive(s: GS): Partial<GS> {
   if (s.snitchPhase !== 'active' || !s.snitchPos) return {}
   const seekers = seekersOnSnitch(s.pieces, s.snitchPos)
-  const isReturnWheel = s.snitchWheelContext === 'return'
-  if (seekers.length === 0 && !isReturnWheel) return {}
+  if (seekers.length === 0) return {}
 
   const bothTeamsPresent = new Set(seekers.map(seeker => seeker.team)).size >= 2
   const turnsCompleted = getSnitchWaitTurnsCompleted(s)
@@ -431,8 +430,7 @@ function evaluateSnitchAfterTurnComplete(s: GS): Partial<GS> {
   if (s.snitchPhase !== 'active' || !s.snitchPos) return {}
 
   const seekers = seekersOnSnitch(s.pieces, s.snitchPos)
-  const isReturnWheel = s.snitchWheelContext === 'return'
-  if (seekers.length === 0 && !isReturnWheel) {
+  if (seekers.length === 0) {
     if (getSnitchWaitTurnsCompleted(s) !== undefined || s.snitchEncounterPending) {
       return {
         snitchEncounterDelayTurns: undefined,
@@ -471,8 +469,7 @@ function evaluateSnitchAfterTurnComplete(s: GS): Partial<GS> {
 
 function isSnitchEncounterReady(s: GS): boolean {
   if (s.snitchPhase !== 'active' || !s.snitchPos) return false
-  const isReturnWheel = s.snitchWheelContext === 'return'
-  if (seekersOnSnitch(s.pieces, s.snitchPos).length === 0 && !isReturnWheel) return false
+  if (seekersOnSnitch(s.pieces, s.snitchPos).length === 0) return false
   const turns = getSnitchWaitTurnsCompleted(s)
   if (turns === undefined) return false
   if (turns >= 2) return true
@@ -948,15 +945,13 @@ function reduce(s: GS, a: Act): GS {
 
     case 'SNITCH_SYNC_WAIT': {
       if (s.snitchPhase !== 'active' || !s.snitchPos) return s
-      const isReturnWheel = s.snitchWheelContext === 'return'
-      if (seekersOnSnitch(s.pieces, s.snitchPos).length === 0 && !isReturnWheel) return s
+      if (seekersOnSnitch(s.pieces, s.snitchPos).length === 0) return s
       return applySnitchWaitToState({ ...s, revision: bumpRevision(s) })
     }
 
     case 'SNITCH_TRIGGER_ENCOUNTER': {
       if (s.snitchPhase !== 'active' || !s.snitchPos) return s
-      const isReturnWheel = s.snitchWheelContext === 'return'
-      if (seekersOnSnitch(s.pieces, s.snitchPos).length === 0 && !isReturnWheel) return s
+      if (seekersOnSnitch(s.pieces, s.snitchPos).length === 0) return s
       if (!isSnitchEncounterReady(s)) return s
       return { ...s, ...triggerSnitchEncounterPhase(s), revision: bumpRevision(s) }
     }
@@ -2386,8 +2381,7 @@ export default function GamePage() {
   /* ── Snitch encounter: Team 1 syncs wait state and promotes ready → encounter ── */
   useEffect(() => {
     if (myTeam !== 1 || gs.snitchPhase !== 'active' || !gs.snitchPos) return
-    const isReturnWheel = gs.snitchWheelContext === 'return'
-    if (seekersOnSnitch(gs.pieces, gs.snitchPos).length === 0 && !isReturnWheel) return
+    if (seekersOnSnitch(gs.pieces, gs.snitchPos).length === 0) return
 
     if (getSnitchWaitTurnsCompleted(gs) === undefined) {
       emit({ kind: 'SNITCH_SYNC_WAIT' })
@@ -2398,7 +2392,7 @@ export default function GamePage() {
       console.log('[SNITCH] Wait requirement satisfied — triggering encounter phase')
       emit({ kind: 'SNITCH_TRIGGER_ENCOUNTER' })
     }
-  }, [gs.snitchPhase, gs.snitchWaitTurnsCompleted, gs.snitchEncounterDelayTurns, gs.pieces, gs.snitchPos, gs.snitchWheelContext, myTeam, emit])
+  }, [gs.snitchPhase, gs.snitchWaitTurnsCompleted, gs.snitchEncounterDelayTurns, gs.pieces, gs.snitchPos, myTeam, emit])
 
   /* ── Snitch fate wheel: Team 1 hosts authoritative spin when encounter phase is set ── */
   useEffect(() => {
@@ -2407,15 +2401,13 @@ export default function GamePage() {
     if (myTeam !== 1) return
 
     const current = gsRef.current
-    const isReturnWheel = current.snitchWheelContext === 'return'
-    if (!current.snitchPos || (seekersOnSnitch(current.pieces, current.snitchPos).length === 0 && !isReturnWheel)) return
+    if (!current.snitchPos || seekersOnSnitch(current.pieces, current.snitchPos).length === 0) return
 
     console.log('[SNITCH] Encounter phase confirmed — scheduling authoritative wheel spin')
     const t = setTimeout(() => {
       const live = gsRef.current
-      const isLiveReturn = live.snitchWheelContext === 'return'
       if (live.snitchPhase !== 'encounter' || live.snitchOutcomeAngle !== undefined) return
-      if (!live.snitchPos || (seekersOnSnitch(live.pieces, live.snitchPos).length === 0 && !isLiveReturn)) return
+      if (!live.snitchPos || seekersOnSnitch(live.pieces, live.snitchPos).length === 0) return
 
       const { labels, outcomes } = shuffleOutcomes(live.snitchWheelContext)
       // After shuffle, pick index 0 - the shuffle already guarantees equal probability

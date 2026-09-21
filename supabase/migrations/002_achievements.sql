@@ -23,7 +23,7 @@ INSERT INTO achievements (name, description, icon, requirement, rarity) VALUES
 ('First Victory', 'Win your first Quidditch match', '🏆', 'Win 1 match', 'common'),
 ('Keeper''s Wall', 'Block 10 shots as Keeper', '🛡️', 'Block 10 shots', 'rare'),
 ('Perfect Defense', 'Win a match without conceding any goals', '⭐', 'Zero goals conceded', 'epic'),
-('Chaser''s Glory', 'Score 100 points as Chaser', '⚡', 'Score 100 points', 'rare'),
+('Chaser''s Glory', 'Score 10 goals as Chaser', '⚡', 'Score 10 goals', 'rare'),
 ('Bludger Master', 'Hit 5 opponents with Bludgers', '🪨', 'Hit 5 opponents', 'rare'),
 ('Golden Seeker', 'Catch the Golden Snitch', '🥇', 'Catch Snitch', 'epic'),
 ('Team Player', 'Participate in 10 team matches', '🤝', '10 team matches', 'common'),
