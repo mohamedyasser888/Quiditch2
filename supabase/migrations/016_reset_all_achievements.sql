@@ -1,6 +1,14 @@
--- Fix achievement evaluation to properly count total achievements for Legendary Wizard
--- This ensures the 10/10 achievement properly unlocks Legendary Wizard
+-- Complete reset of all player progress
+-- This will reset all player game statistics and achievements
+-- Update Chaser's Glory achievement to require 1000 points
 
+-- Update Chaser's Glory achievement definition
+UPDATE achievements 
+SET description = 'Score 1000 points as Chaser', 
+    requirement = 'Score 1000 points'
+WHERE name = 'Chaser''s Glory';
+
+-- Update the evaluation function to check for 1000 points
 CREATE OR REPLACE FUNCTION evaluate_game_achievements(p_user_id UUID)
 RETURNS VOID
 LANGUAGE plpgsql
@@ -58,13 +66,16 @@ BEGIN
 END;
 $$;
 
--- Re-evaluate achievements for all existing players
+-- Delete all user achievements
+DELETE FROM user_achievements;
+
+-- Reset all player game statistics to zero
+DELETE FROM player_game_stats;
+
+-- Log the reset
 DO $$
-DECLARE
-  v_user_id UUID;
 BEGIN
-  FOR v_user_id IN SELECT DISTINCT user_id FROM player_game_stats LOOP
-    PERFORM evaluate_game_achievements(v_user_id);
-  END LOOP;
+    RAISE NOTICE 'All player progress has been reset: achievements, matches, wins, scores, and saves are now at zero';
+    RAISE NOTICE 'Chaser''s Glory requires 1000 points';
 END;
 $$;
