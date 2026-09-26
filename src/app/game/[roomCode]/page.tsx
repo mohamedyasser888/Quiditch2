@@ -3208,7 +3208,7 @@ function GamePageInner() {
                 </div>
 
                 {/* Speed selector */}
-                <div className="flex gap-1 shrink-0 ml-auto">
+                <div className="flex gap-1 shrink-0 ml-auto flex-wrap justify-end max-w-[140px]">
                   {ASSIGNABLE_SPEEDS.map(spd => {
                     const ok = canAssign(p, spd)
                     const active = cur === spd
@@ -3221,7 +3221,7 @@ function GamePageInner() {
                         onClick={() => isCaptain && ok && emit({ kind: 'ASSIGN_BROOM', pieceId: p.id, speed: spd })}
                         title={spd === 4 ? '⚡ Speed 4 — jumps 2 squares!' : `Speed ${spd} — 1 square`}
                         className={`
-                          w-8 h-7 rounded text-[11px] font-black border transition-all duration-100 whitespace-nowrap
+                          w-8 h-7 rounded text-[11px] font-black border transition-all duration-100 whitespace-nowrap flex-shrink-0
                           ${active
                             ? `${cfg.activeBg} border-white/40 ${cfg.color} ${cfg.glow} scale-110`
                             : !ok || !isCaptain
