@@ -7,6 +7,16 @@
   "buildCommand": "npm run build",
   "installCommand": "npm ci --prefer-offline --no-audit",
   "framework": "nextjs",
+  "env": {
+    "NEXT_TELEMETRY_DISABLED": "1",
+    "BUILD_TIMESTAMP": "@now"
+  },
+  "build": {
+    "env": {
+      "NEXT_TELEMETRY_DISABLED": "1",
+      "BUILD_TIMESTAMP": "@now"
+    }
+  },
   "headers": [
     {
       "source": "/(.*)",

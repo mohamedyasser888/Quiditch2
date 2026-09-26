@@ -49,10 +49,10 @@ if (supabaseUrl && !supabaseUrl.includes('.supabase.co')) {
   console.warn('⚠️  NEXT_PUBLIC_SUPABASE_URL does not appear to be a Supabase URL');
 }
 
-// Validate key format (should be JWT)
+// Validate key format (JWT or modern publishable key)
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-if (anonKey && !anonKey.startsWith('eyJ')) {
-  console.error('❌ NEXT_PUBLIC_SUPABASE_ANON_KEY does not appear to be a valid JWT token');
+if (anonKey && !anonKey.startsWith('eyJ') && !anonKey.startsWith('sbp_')) {
+  console.error('❌ NEXT_PUBLIC_SUPABASE_ANON_KEY does not appear to be a valid Supabase key (expected eyJ... or sbp_...)');
   process.exit(1);
 }
 

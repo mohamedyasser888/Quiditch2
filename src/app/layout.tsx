@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import HogwartsSignature from "@/components/ui/HogwartsSignature";
 import DeviceInfo from "@/components/ui/DeviceInfo";
 import PerformanceTracker from "@/components/PerformanceTracker";
 import "./globals.css";
@@ -23,7 +22,7 @@ export const viewport: Viewport = {
   themeColor: '#0f172a', // slate-900 for mobile browser chrome
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html
       lang="en"
@@ -38,24 +37,15 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         
         {/* Preconnect - Establish connections early */}
         <link rel="preconnect" href="https://supabase.co" crossOrigin="anonymous" />
-        <link rel="preconnect" href={process.env.NEXT_PUBLIC_SUPABASE_URL || ''} crossOrigin="anonymous" />
         
         {/* Preload Critical Assets */}
         <link rel="preload" href="/quid.webp" as="image" type="image/webp" />
         <link rel="preload" href="/snitch.webp" as="image" type="image/webp" />
-        
-        {/* Prefetch Likely Next Pages */}
-        <link rel="prefetch" href="/home" />
-        <link rel="prefetch" href="/play" />
-        
-        {/* Module Preload for Critical Scripts */}
-        <link rel="modulepreload" href="/_next/static/chunks/main-app.js" />
       </head>
       <body className="min-h-full flex flex-col">
         <PerformanceTracker />
         <DeviceInfo />
         {children}
-        <HogwartsSignature />
       </body>
     </html>
   );

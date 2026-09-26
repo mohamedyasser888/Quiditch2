@@ -35,26 +35,6 @@ const nextConfig: NextConfig = {
             key: 'Permissions-Policy',
             value: 'camera=(), microphone=(), geolocation=()'
           },
-          // Performance headers
-          {
-            key: 'Cache-Control',
-            value: 'public, max-age=31536000, immutable'
-          },
-          // Early Hints for HTTP/2 Push
-          {
-            key: 'Link',
-            value: '</quid.webp>; rel=preload; as=image, </snitch.webp>; rel=preload; as=image'
-          },
-        ]
-      },
-      // Static assets aggressive caching
-      {
-        source: '/public/:path*',
-        headers: [
-          {
-            key: 'Cache-Control',
-            value: 'public, max-age=31536000, immutable'
-          }
         ]
       },
       // Images caching
@@ -76,6 +56,16 @@ const nextConfig: NextConfig = {
           }
         ]
       },
+      // Audio files caching
+      {
+        source: '/:all*.mp3',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=31536000, immutable'
+          }
+        ]
+      },
       // JavaScript bundles caching
       {
         source: '/_next/static/:path*',
@@ -83,6 +73,24 @@ const nextConfig: NextConfig = {
           {
             key: 'Cache-Control',
             value: 'public, max-age=31536000, immutable'
+          }
+        ]
+      },
+      // Game page - no cache to prevent stale JavaScript behavior
+      {
+        source: '/game/:roomCode*',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'no-cache, no-store, must-revalidate'
+          },
+          {
+            key: 'Pragma',
+            value: 'no-cache'
+          },
+          {
+            key: 'Expires',
+            value: '0'
           }
         ]
       }
@@ -104,79 +112,19 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   compress: true,
   
-  // Aggressive code splitting
+  // Generate unique build IDs for cache busting
+  generateBuildId: async () => {
+    // Use timestamp + random to ensure unique builds
+    return `build-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
+  },
+  
+  // Optimized package imports
   experimental: {
-    optimizePackageImports: ['@supabase/supabase-js', '@supabase/ssr', 'react', 'react-dom'],
+    optimizePackageImports: ['@supabase/supabase-js', '@supabase/ssr'],
   },
   
-  // Turbopack configuration (required for Next.js 16+)
+  // Turbopack configuration (default bundler for Next.js 16+)
   turbopack: {},
-  
-  // Webpack optimization for tree shaking
-  webpack: (config, { dev, isServer }) => {
-    if (!dev) {
-      // Production optimizations
-      config.optimization = {
-        ...config.optimization,
-        // Enable tree shaking
-        usedExports: true,
-        // Remove dead code
-        minimize: true,
-        // Split runtime code for better caching
-        runtimeChunk: 'single',
-        // Split vendor chunks
-        splitChunks: {
-          chunks: 'all',
-          cacheGroups: {
-            // Supabase bundle (changes less frequently)
-            supabase: {
-              test: /[\\/]node_modules[\\/](@supabase)[\\/]/,
-              name: 'supabase',
-              priority: 20,
-              reuseExistingChunk: true,
-            },
-            // React bundle (changes less frequently)
-            react: {
-              test: /[\\/]node_modules[\\/](react|react-dom)[\\/]/,
-              name: 'react',
-              priority: 20,
-              reuseExistingChunk: true,
-            },
-            // Other vendor code
-            vendor: {
-              test: /[\\/]node_modules[\\/]/,
-              name: 'vendor',
-              priority: 10,
-              reuseExistingChunk: true,
-            },
-            // Common code shared across pages
-            common: {
-              minChunks: 2,
-              priority: 5,
-              reuseExistingChunk: true,
-              enforce: true,
-            },
-          },
-        },
-      };
-      
-      // Resolve optimizations
-      config.resolve = {
-        ...config.resolve,
-        // Prioritize ES modules for tree shaking
-        mainFields: ['module', 'main'],
-        // Alias for smaller bundles
-        alias: {
-          ...config.resolve.alias,
-          // Use production builds
-          'react': 'react/cjs/react.production.min.js',
-          'react-dom': 'react-dom/cjs/react-dom.production.min.js',
-        },
-      };
-    }
-    
-    return config;
-  },
   
   // Image optimization
   images: {

@@ -43,8 +43,8 @@ input, select, textarea {
   font-size: 16px !important; /* Prevents iOS zoom on focus */
 }
 
-/* Better touch targets for mobile */
-button, a, [role="button"] {
+/* Better touch targets for mobile — opt out with data-compact */
+button:not([data-compact]), a:not([data-compact]), [role="button"]:not([data-compact]) {
   min-height: 44px; /* WCAG touch target minimum */
   min-width: 44px;
 }
