@@ -513,7 +513,7 @@ function progressAfterMove(s: GS, movedPiece?: Piece) {
     return {
       turnCount,
       snitchHiddenMoves: hiddenMoves,
-      snitchPhase: 'active' as const,
+      snitchPhase: 'encounter' as const,
       snitchPos: s.snitchHiddenSquare || s.snitchPos,
       snitchHiddenSquare: undefined,
       snitchWheelContext: 'return' as const,
@@ -1977,6 +1977,21 @@ const StarterWheel = React.memo(function StarterWheel({
 ═══════════════════════════════════════════════════════════════════════════ */
 
 export default function GamePage() {
+  return (
+    <React.Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-[#0b1020]">
+        <div className="text-center">
+          <div className="text-6xl mb-4 animate-bounce">🧹</div>
+          <p className="text-xl text-slate-300 font-bold">Loading game...</p>
+        </div>
+      </div>
+    }>
+      <GamePageInner />
+    </React.Suspense>
+  )
+}
+
+function GamePageInner() {
   const params   = useParams()
   const router   = useRouter()
   const search   = useSearchParams()
@@ -1989,6 +2004,9 @@ export default function GamePage() {
   // Team names from URL
   const t1Name   = search.get('t1') || 'Team 1'
   const t2Name   = search.get('t2') || 'Team 2'
+  // House params — comma-separated lists of houses for each team, passed from the room lobby
+  const h1Param  = search.get('h1') || ''
+  const h2Param  = search.get('h2') || ''
   // Captain flag — solo players are always captain; team mode passes ?captain=true for the captain
   const isCaptain = !isSpectator && search.get('captain') !== 'false'
   // Starter team from coin flip result in room lobby
@@ -2014,6 +2032,10 @@ export default function GamePage() {
   const [hover, setHover]    = useState<string | null>(null)
   const [scoreFlash, setFlash] = useState<Team | null>(null)
   const [celebration, setCelebration] = useState<{ team: Team; points: number; isStreakBonus: boolean } | null>(null)
+  const [teamHouses, setTeamHouses] = useState<{ 1: string[]; 2: string[] }>(() => ({
+    1: h1Param ? h1Param.split(',').filter(Boolean) : [],
+    2: h2Param ? h2Param.split(',').filter(Boolean) : [],
+  }))
   
   // DEBUG: Log state changes
   useEffect(() => {
@@ -2101,7 +2123,7 @@ export default function GamePage() {
       if (!user || cancelled) return
       const { data: room } = await supabase
         .from('rooms')
-        .select('id')
+        .select('id, mode')
         .eq('room_code', roomCode)
         .single()
       if (!room || cancelled) return
@@ -2118,6 +2140,49 @@ export default function GamePage() {
       const verifiedTeam = teams?.find(team => team.id === membership?.team_id)?.team_number
       if (!cancelled && (verifiedTeam === 1 || verifiedTeam === 2)) setMyTeam(verifiedTeam)
       if (!cancelled) setTeamIdentityReady(true)
+
+      // Fetch houses for commentator audio — only needed as fallback when URL params are absent
+      if (teams && !cancelled) {
+        const houses: { 1: string[]; 2: string[] } = { 1: [], 2: [] }
+
+        if (room.mode === 'solo') {
+          // In solo mode the player controls both teams — read their house
+          // directly from their own profile so the correct audio always plays.
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('house')
+            .eq('id', user.id)
+            .single()
+          const myHouse = profile?.house
+          if (myHouse && !cancelled) {
+            houses[1].push(myHouse)
+            houses[2].push(myHouse)
+            setTeamHouses(houses)
+          }
+        } else if (!h1Param && !h2Param) {
+          // Team mode fallback: only fetch from DB if URL params were not provided
+          // (URL params are the authoritative source and avoid RLS blind spots)
+          const { data: members } = await supabase
+            .from('team_members')
+            .select('team_id, profiles(house)')
+            .in('team_id', teams.map(t => t.id))
+          
+          console.log('[AUDIO DEBUG] DB Fallback members fetched:', members)
+          if (members && !cancelled) {
+            for (const m of members) {
+              const teamNum = teams.find(t => t.id === m.team_id)?.team_number
+              const house = (m.profiles as unknown as { house: string } | null)?.house
+              if ((teamNum === 1 || teamNum === 2) && house) {
+                houses[teamNum].push(house)
+              }
+            }
+            console.log('[AUDIO DEBUG] DB Fallback teamHouses computed:', houses)
+            setTeamHouses(houses)
+          }
+        }
+        // If h1Param/h2Param are present (team mode), teamHouses was already initialized
+        // from URL and we skip the DB fetch to avoid overwriting with partial RLS data.
+      }
     })()
     return () => { cancelled = true }
   }, [isSpectator, roomCode, supabase])
@@ -2401,13 +2466,13 @@ export default function GamePage() {
     if (myTeam !== 1) return
 
     const current = gsRef.current
-    if (!current.snitchPos || seekersOnSnitch(current.pieces, current.snitchPos).length === 0) return
+    if (!current.snitchPos || (current.snitchWheelContext !== 'return' && seekersOnSnitch(current.pieces, current.snitchPos).length === 0)) return
 
     console.log('[SNITCH] Encounter phase confirmed — scheduling authoritative wheel spin')
     const t = setTimeout(() => {
       const live = gsRef.current
       if (live.snitchPhase !== 'encounter' || live.snitchOutcomeAngle !== undefined) return
-      if (!live.snitchPos || seekersOnSnitch(live.pieces, live.snitchPos).length === 0) return
+      if (!live.snitchPos || (live.snitchWheelContext !== 'return' && seekersOnSnitch(live.pieces, live.snitchPos).length === 0)) return
 
       const { labels, outcomes } = shuffleOutcomes(live.snitchWheelContext)
       // After shuffle, pick index 0 - the shuffle already guarantees equal probability
@@ -2436,6 +2501,30 @@ export default function GamePage() {
     const t = setTimeout(() => emit({ kind: 'SNITCH_OUTCOME_RESOLVE' }), 10200) // Same timing as CombatWheel
     return () => clearTimeout(t)
   }, [gs.snitchPhase, gs.snitchOutcomeAngle, gs.combat, myTeam, emit])
+
+  // ── Snitch audio commentator ─────────────────────────────────────────────
+  // Track previous phase with a ref so every genuine phase *transition* fires
+  // the correct audio, even when remote state syncs re-deliver the same phase.
+  const prevSnitchPhaseRef = useRef<string | null>(null)
+  useEffect(() => {
+    const prev = prevSnitchPhaseRef.current
+    const curr = gs.snitchPhase
+
+    if (curr !== prev) {
+      prevSnitchPhaseRef.current = curr
+
+      let audioFile: string | null = null
+      if (curr === 'spinning') audioFile = '/sm.mp3'  // Snitch moving
+      if (curr === 'hiding')   audioFile = '/sd.mp3'  // Snitch disappears
+      if (curr === 'caught')   audioFile = '/ss.mp3'  // Seeker catches snitch
+
+      if (audioFile) {
+        const audio = new Audio(audioFile)
+        audio.volume = 1.0
+        audio.play().catch(() => { /* autoplay blocked */ })
+      }
+    }
+  })
 
   /* A held Snitch shared by both Seekers gets a speed-weighted catch wheel. */
   useEffect(() => {
@@ -2817,21 +2906,75 @@ export default function GamePage() {
   useEffect(() => {
     if (gs.duel?.phase !== 'reveal' || !gs.duel.result) return
     const atk = gs.pieces.find(p => p.id === gs.duel!.attackerId)
+    const attackingTeam = atk?.team ?? 1
+    const defendingTeam = attackingTeam === 1 ? 2 : 1
+
     if (gs.duel.result === 'goal') {
-      setFlash(atk?.team ?? 1)
-      // Show celebration with correct points
-      const team = atk?.team ?? 1
-      const currentStreak = team === 1 ? gs.streak1 : gs.streak2
+      setFlash(attackingTeam)
+      const currentStreak = attackingTeam === 1 ? gs.streak1 : gs.streak2
       const isStreakBonus = currentStreak === 1 // They had 1 streak, this is the 2nd goal
       const points = isStreakBonus ? 20 : 10
-      setCelebration({ team, points, isStreakBonus })
+      setCelebration({ team: attackingTeam, points, isStreakBonus })
     }
+
+    // ── Commentator audio ────────────────────────────────────────────────
+    // Check if scoring team is Hufflepuff or Slytherin
+    const scoringTeamHouses = teamHouses[attackingTeam] ?? []
+    const isHufflepuffGoal = gs.duel.result === 'goal' && scoringTeamHouses.includes('hufflepuff')
+    const isSlytherinGoal  = gs.duel.result === 'goal' && scoringTeamHouses.includes('slytherin')
+
+    // Check if defending (saving) team is Hufflepuff or Slytherin
+    const defendingTeamHouses = teamHouses[defendingTeam] ?? []
+    const isHufflepuffSave = gs.duel.result === 'save' && defendingTeamHouses.includes('hufflepuff')
+    const isSlytherinSave  = gs.duel.result === 'save' && defendingTeamHouses.includes('slytherin')
+
+    const audioFile = isHufflepuffGoal ? '/gh.mp3'
+                    : isSlytherinGoal  ? '/gs.mp3'
+                    : isHufflepuffSave ? '/hh.mp3'
+                    : isSlytherinSave  ? '/hs.mp3'
+                    : null
+
+    console.log('[AUDIO DEBUG] Result:', gs.duel.result, 'Attacking Team:', attackingTeam, 'Defending Team:', defendingTeam)
+    console.log('[AUDIO DEBUG] teamHouses state:', teamHouses)
+    console.log('[AUDIO DEBUG] scoringTeamHouses:', scoringTeamHouses, 'defendingTeamHouses:', defendingTeamHouses)
+    console.log('[AUDIO DEBUG] Selected Audio:', audioFile)
+
+    if (audioFile) {
+      const audio = new Audio(audioFile)
+      audio.volume = 1.0
+      let dismissTimer: ReturnType<typeof setTimeout>
+
+      const dismiss = () => {
+        setFlash(null)
+        emit({ kind: 'DRESET' })
+      }
+
+      // When the clip finishes naturally, dismiss
+      audio.addEventListener('ended', dismiss)
+
+      // Safety fallback: if audio fails or is very long, cap at 10 s
+      dismissTimer = setTimeout(dismiss, 10000)
+
+      audio.play().catch(() => {
+        // Autoplay blocked — fall back to 3 s default
+        clearTimeout(dismissTimer)
+        dismissTimer = setTimeout(dismiss, 3000)
+      })
+
+      return () => {
+        audio.removeEventListener('ended', dismiss)
+        audio.pause()
+        clearTimeout(dismissTimer)
+      }
+    }
+
+    // Non-Hufflepuff action — standard 3 s display
     const t = setTimeout(() => {
       setFlash(null)
       emit({ kind: 'DRESET' })
     }, 3000)
     return () => clearTimeout(t)
-  }, [gs.duel?.phase, emit]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [gs.duel?.phase, emit, teamHouses]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Combat reveal → reset spin UI (turn ends via COMBAT_REVEAL_COMPLETE) ─ */
   useEffect(() => {
@@ -3050,22 +3193,22 @@ export default function GamePage() {
         </div>
 
         {/* Piece rows */}
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           {nonGK.map(p => {
             const cur = p.broomSpeed  // always fresh — lives on the piece
             return (
-              <div key={p.id} className={`flex items-center justify-between px-1 py-1 rounded-lg bg-slate-900/40 border border-transparent hover:border-white/10 transition-all`}>
+              <div key={p.id} className={`flex items-center gap-2 px-1.5 py-1.5 rounded-lg bg-slate-900/40 border border-transparent hover:border-white/10 transition-all`}>
                 {/* Piece info */}
-                <div className="flex items-center gap-1.5 min-w-0">
+                <div className="flex items-center gap-1.5 min-w-0 shrink-0" style={{ width: '52px' }}>
                   <PieceShape type={p.type} team={team} selected={false} size={20} />
-                  <div className="text-xs leading-tight min-w-0">
-                    <div className={`font-bold ${teamColor === 'purple' ? 'text-purple-300' : 'text-amber-300'}`}>{typeName(p.type)}</div>
-                    <div className="text-slate-500 font-mono">{p.col}{p.row}</div>
+                  <div className="text-xs leading-tight min-w-0 overflow-hidden">
+                    <div className={`font-bold truncate ${teamColor === 'purple' ? 'text-purple-300' : 'text-amber-300'}`}>{typeName(p.type)}</div>
+                    <div className="text-slate-500 font-mono truncate">{p.col}{p.row}</div>
                   </div>
                 </div>
 
                 {/* Speed selector */}
-                <div className="flex gap-0.5 shrink-0">
+                <div className="flex gap-1 shrink-0 ml-auto">
                   {ASSIGNABLE_SPEEDS.map(spd => {
                     const ok = canAssign(p, spd)
                     const active = cur === spd
@@ -3073,11 +3216,12 @@ export default function GamePage() {
                     return (
                       <button
                         key={spd}
+                        data-compact
                         disabled={!isCaptain || (!ok && !active)}
                         onClick={() => isCaptain && ok && emit({ kind: 'ASSIGN_BROOM', pieceId: p.id, speed: spd })}
                         title={spd === 4 ? '⚡ Speed 4 — jumps 2 squares!' : `Speed ${spd} — 1 square`}
                         className={`
-                          w-7 h-6 rounded text-[11px] font-black border transition-all duration-100
+                          w-8 h-7 rounded text-[11px] font-black border transition-all duration-100 whitespace-nowrap
                           ${active
                             ? `${cfg.activeBg} border-white/40 ${cfg.color} ${cfg.glow} scale-110`
                             : !ok || !isCaptain
@@ -3438,7 +3582,7 @@ export default function GamePage() {
       <main className="relative z-10 flex-1 flex items-center justify-center p-4 gap-8 overflow-auto flex-col lg:flex-row">
         
         {/* ── Left/Bottom Panel (Purple - Team 1) ──────────────────────────── */}
-        <aside className={`shrink-0 w-64 p-5 rounded-2xl border backdrop-blur-sm order-3 lg:order-1
+        <aside className={`shrink-0 w-full max-w-64 p-5 rounded-2xl border backdrop-blur-sm order-3 lg:order-1
           ${gs.phase === 'deployment' && !myDone && myTeam === 1
             ? 'bg-purple-500/10 border-purple-500/40'
             : 'bg-slate-900/40 border-slate-700/30'}`}>
@@ -3554,7 +3698,7 @@ export default function GamePage() {
         </section>
 
         {/* ── Right/Top Panel (Yellow - Team 2) ─────────────────────────── */}
-        <aside className={`shrink-0 w-64 p-5 rounded-2xl border backdrop-blur-sm order-1 lg:order-3
+        <aside className={`shrink-0 w-full max-w-64 p-5 rounded-2xl border backdrop-blur-sm order-1 lg:order-3
           ${gs.phase === 'deployment' && !myDone && myTeam === 2
             ? 'bg-amber-500/10 border-amber-500/40'
             : 'bg-slate-900/40 border-slate-700/30'}`}>

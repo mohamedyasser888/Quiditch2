@@ -234,6 +234,8 @@ export default function RoomPage() {
       t2: t2?.name || 'Team 2',
       captain: String(room.mode === 'solo' || myTeam?.captain_id === profile.id),
       starter: String(room.starting_team === 2 ? 2 : 1),
+      h1: teamMembers.filter(tm => teams.find(t => t.id === tm.team_id)?.team_number === 1).map(tm => tm.profiles.house).join(','),
+      h2: teamMembers.filter(tm => teams.find(t => t.id === tm.team_id)?.team_number === 2).map(tm => tm.profiles.house).join(','),
     })
 
     // A room code can be shared after kickoff. Route non-members into the
@@ -307,7 +309,9 @@ export default function RoomPage() {
             const finalStarter = coinFlipResult || syncedCoinResult || 1
             console.log('[NAVIGATE] Going to game with starter:', finalStarter, '(1=Purple, 2=Yellow)')
             console.log('[NAVIGATE] coinFlipResult:', coinFlipResult, 'syncedCoinResult:', syncedCoinResult)
-            router.push(`/game/${roomCode}?team=${myTeamNumber}&t1=${encodeURIComponent(t1Name)}&t2=${encodeURIComponent(t2Name)}&captain=${amICaptain}&starter=${finalStarter}`)
+            const h1Houses = teamMembers.filter(tm => teams.find(t => t.id === tm.team_id)?.team_number === 1).map(tm => tm.profiles.house).join(',')
+            const h2Houses = teamMembers.filter(tm => teams.find(t => t.id === tm.team_id)?.team_number === 2).map(tm => tm.profiles.house).join(',')
+            router.push(`/game/${roomCode}?team=${myTeamNumber}&t1=${encodeURIComponent(t1Name)}&t2=${encodeURIComponent(t2Name)}&captain=${amICaptain}&starter=${finalStarter}&h1=${encodeURIComponent(h1Houses)}&h2=${encodeURIComponent(h2Houses)}`)
           }, 1000)  // Short delay after fadeout
         }, 500)  // Fadeout duration
       }, 7000)  // 7 seconds for coin flip (4s animation + 3s result)
@@ -345,7 +349,9 @@ export default function RoomPage() {
 
               const finalStarter = syncedCoinResult || coinFlipResult || 1
               console.log('[NAVIGATE SYNCED] Going to game with starter:', finalStarter, '(1=Purple, 2=Yellow)')
-              router.push(`/game/${roomCode}?team=${myTeamNumber}&t1=${encodeURIComponent(t1Name)}&t2=${encodeURIComponent(t2Name)}&captain=${amICaptain}&starter=${finalStarter}`)
+              const h1Houses = teamMembers.filter(tm => teams.find(t => t.id === tm.team_id)?.team_number === 1).map(tm => tm.profiles.house).join(',')
+              const h2Houses = teamMembers.filter(tm => teams.find(t => t.id === tm.team_id)?.team_number === 2).map(tm => tm.profiles.house).join(',')
+              router.push(`/game/${roomCode}?team=${myTeamNumber}&t1=${encodeURIComponent(t1Name)}&t2=${encodeURIComponent(t2Name)}&captain=${amICaptain}&starter=${finalStarter}&h1=${encodeURIComponent(h1Houses)}&h2=${encodeURIComponent(h2Houses)}`)
             }, 1000)
           }, 500)
         }, 7000)
