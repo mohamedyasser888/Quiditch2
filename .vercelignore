@@ -1,0 +1,50 @@
+# Vercel Ignore - Files to exclude from deployment
+# This speeds up deployment by reducing upload size
+
+# Documentation
+*.md
+!README.md
+docs/
+documentation/
+
+# Development files
+.git
+.github
+.vscode
+.idea
+
+# Testing
+__tests__/
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+coverage/
+
+# Cache and build artifacts
+.next/
+.turbo/
+node_modules/
+.DS_Store
+
+# Environment examples
+.env.example
+.env.local
+
+# Audio files (if not needed for app)
+# Uncomment if audio is not used:
+# *.mp3
+# *.wav
+# *.ogg
+
+# Migration scripts (already applied in Supabase)
+supabase/migrations/
+
+# Scripts (not needed in production)
+scripts/optimize-images.js
+scripts/analyze-bundle.js
+
+# Config for local dev only
+.eslintrc*
+.prettierrc*
+tsconfig.tsbuildinfo

@@ -18,7 +18,8 @@
     "start": "next start",
     "lint": "eslint",
     "audit": "npm audit --audit-level=moderate",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "postinstall": "echo 'Dependencies installed successfully'"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

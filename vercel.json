@@ -1,9 +1,12 @@
 {
   "version": 2,
-  "regions": ["iad1", "sfo1", "lhr1", "fra1", "hnd1", "syd1"],
+  "regions": ["fra1"],
   "github": {
     "silent": true
   },
+  "buildCommand": "npm run build",
+  "installCommand": "npm ci --prefer-offline --no-audit",
+  "framework": "nextjs",
   "headers": [
     {
       "source": "/(.*)",
@@ -36,7 +39,7 @@
       ]
     },
     {
-      "source": "/(.*\\.(webp|png|jpg|jpeg|gif|ico|svg))",
+      "source": "/(.*).(webp|png|jpg|jpeg|gif|ico|svg)",
       "headers": [
         {
           "key": "Cache-Control",
@@ -69,12 +72,6 @@
           "value": "public, max-age=86400"
         }
       ]
-    }
-  ],
-  "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/"
     }
   ],
   "trailingSlash": false,

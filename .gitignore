@@ -40,3 +40,17 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Audio files (too large for git)
+*.mp3
+*.wav
+*.ogg
+*.m4a
+
+# Large media files
+*.mov
+*.mp4
+*.avi
+
+# Documentation markdown files (optional - keep for now)
+# *.md
