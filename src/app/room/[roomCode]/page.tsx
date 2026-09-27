@@ -262,11 +262,7 @@ export default function RoomPage() {
         const serverStarter: 1 | 2 = data?.starting_team ?? 1
         console.log('[COIN FLIP] Server returned starting_team:', serverStarter, '(1=Purple, 2=Yellow)')
         console.log('[COIN FLIP] Full data:', data)
-        // TEMPORARY FIX: Invert the result to match the visual
-        // Remove this once the server logic is fixed
-        const correctedStarter = serverStarter === 1 ? 2 : 1
-        console.log('[COIN FLIP] Using corrected starter:', correctedStarter, '(inverted from server)')
-        setCoinFlipResult(correctedStarter)
+        setCoinFlipResult(serverStarter)
 
         // Broadcast coin flip result to all clients via realtime
         const channelName = `room:${roomCode}-${Math.random()}`
