@@ -661,6 +661,24 @@ export default function RoomPage() {
     }
   }
 
+  const handleClaimCaptain = async (teamId: string) => {
+    if (!profile) return
+    setActionLoading(true)
+    setError('')
+    try {
+      const { data, error: rpcError } = await supabase.rpc('claim_captain', {
+        p_team_id: teamId,
+      })
+      if (rpcError || !data?.success) {
+        setError(data?.error || rpcError?.message || 'Failed to claim captain.')
+      }
+    } catch {
+      setError('A magical disturbance occurred.')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push('/login')
@@ -882,25 +900,48 @@ export default function RoomPage() {
                   </div>
 
                   {/* Captain */}
-                  {isEffectivelyCaptain && effectiveCaptainId && (
-                    <div className="mb-4 p-3 bg-amber-500/10 rounded-lg border border-amber-500/30">
-                      <div className="text-amber-400 text-sm font-semibold mb-1">Team Captain</div>
-                      {members.find(m => m.user_id === effectiveCaptainId) ? (
+                  <div className="mb-4 p-3 bg-amber-500/10 rounded-lg border border-amber-500/30">
+                    <div className="text-amber-400 text-sm font-semibold mb-2 flex items-center gap-1">
+                      👑 Team Captain
+                    </div>
+                    {effectiveCaptainId ? (
+                      <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
-                          <span className="text-white font-semibold">
-                            {members.find(m => m.user_id === effectiveCaptainId)?.profiles.magical_name}
+                          <span className="text-2xl">👑</span>
+                          <span className="text-white font-bold">
+                            {members.find(m => m.user_id === effectiveCaptainId)?.profiles.magical_name || '...'}
                           </span>
                           {effectiveCaptainId === profile.id && (
-                            <span className="px-2 py-0.5 bg-amber-500 text-black text-xs font-bold rounded-full">
-                              YOU
-                            </span>
+                            <span className="px-2 py-0.5 bg-amber-500 text-black text-xs font-bold rounded-full">YOU</span>
                           )}
                         </div>
-                      ) : (
-                        <span className="text-slate-400 animate-pulse">...</span>
-                      )}
-                    </div>
-                  )}
+                        {/* Claim Captain button — shown to team members who are NOT already captain */}
+                        {isUserInTeam(team.id) && effectiveCaptainId !== profile.id && !team.ready && !isSolo && (
+                          <button
+                            onClick={() => handleClaimCaptain(team.id)}
+                            disabled={actionLoading}
+                            className="px-3 py-1.5 bg-purple-600/30 hover:bg-purple-600/50 border border-purple-500/50 text-purple-300 text-xs font-bold rounded-lg transition-all disabled:opacity-50"
+                          >
+                            Claim Captain
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400 text-sm">No captain yet</span>
+                        {isUserInTeam(team.id) && (
+                          <button
+                            onClick={() => handleClaimCaptain(team.id)}
+                            disabled={actionLoading}
+                            className="px-3 py-1.5 bg-amber-600/30 hover:bg-amber-600/50 border border-amber-500/50 text-amber-300 text-xs font-bold rounded-lg transition-all disabled:opacity-50"
+                          >
+                            Become Captain
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
 
                   {/* Members */}
                   <div className="space-y-3">
@@ -952,21 +993,27 @@ export default function RoomPage() {
                         </div>
                       )}
                       {!team.ready ? (
-                        (() => {
-                          const currentName = localTeamNames[team.id] !== undefined ? localTeamNames[team.id] : (team.name || '')
-                          const hasName = currentName.trim() !== ''
-                          return (
-                            <MagicalButton
-                              onClick={handleConfirmTeam}
-                              disabled={actionLoading}
-                              className="w-full"
-                            >
-                              {!hasName
-                                ? '✏️ Enter team name & click Ready'
-                                : '✅ Ready!'}
-                            </MagicalButton>
-                          )
-                        })()
+                        effectiveCaptainId === profile?.id ? (
+                          (() => {
+                            const currentName = localTeamNames[team.id] !== undefined ? localTeamNames[team.id] : (team.name || '')
+                            const hasName = currentName.trim() !== ''
+                            return (
+                              <MagicalButton
+                                onClick={handleConfirmTeam}
+                                disabled={actionLoading}
+                                className="w-full"
+                              >
+                                {!hasName
+                                  ? '✏️ Enter team name & click Ready'
+                                  : '✅ Ready!'}
+                              </MagicalButton>
+                            )
+                          })()
+                        ) : (
+                          <div className="text-slate-400 text-center font-semibold p-3 rounded-lg bg-slate-800/50 animate-pulse">
+                            Waiting for Captain to ready up...
+                          </div>
+                        )
                       ) : (
                         <div className="text-emerald-400 text-center font-semibold border-2 border-emerald-500/30 p-3 rounded-lg bg-emerald-500/10">
                           ✓ Team Ready!

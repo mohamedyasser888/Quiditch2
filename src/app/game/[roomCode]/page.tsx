@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } 
 import Image from 'next/image'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { getPieceController } from '@/lib/gamePermissions'
 import { KeyboardHintGroup } from '@/components/ui/KeyboardHint'
 import ToastNotification from '@/components/ui/ToastNotification'
 
@@ -26,6 +27,7 @@ interface Piece {
   col:        Col
   row:        number   // 0 = Yellow GZ · 1-5 = field · 6 = Purple GZ
   broomSpeed: BroomSpeed
+  controllerPlayerId?: string // User who owns/controls this piece's special actions
   bludgerUsed?: boolean
   disabledUntilTurn?: number
   stayedInGoalZone?: boolean  // True if attacker chose "stay" after winning combat in goal zone
@@ -106,10 +108,11 @@ interface GS {
   coinFlipStatus?: 'pending' | 'flipping' | 'completed'
   coinFlipResult?: Team
   coinFlipEventId?: string
+  currentActionPlayerId?: string // Track who is currently required to perform an action
 }
 
 type Act =
-  | { kind: 'PLACE';        id: string; team: Team; pt: PieceType; col: Col; row: number }
+  | { kind: 'PLACE';        id: string; team: Team; pt: PieceType; col: Col; row: number; controllerPlayerId?: string }
   | { kind: 'DDONE';        team: Team }
   | { kind: 'MOVE';         pid: string; col: Col; row: number }
   | { kind: 'END_BONUS_TURN' }
@@ -546,12 +549,21 @@ function reduce(s: GS, a: Act): GS {
         team: a.team,
         type: a.pt,
         position: `${a.col}${a.row}`,
+        controllerPlayerId: a.controllerPlayerId,
         beforeCount: s.pieces.length,
         currentRevision: s.revision
       })
       const placeState = {
         ...s,
-        pieces: [...s.pieces, { id: a.id, team: a.team, type: a.pt, col: a.col, row: a.row, broomSpeed: 1 as BroomSpeed }],
+        pieces: [...s.pieces, { 
+          id: a.id, 
+          team: a.team, 
+          type: a.pt, 
+          col: a.col, 
+          row: a.row, 
+          broomSpeed: 1 as BroomSpeed,
+          controllerPlayerId: a.controllerPlayerId 
+        }],
         revision: (s.revision ?? 0) + 1,  // ← INCREMENT REVISION OPTIMISTICALLY
       }
       console.log('[REDUCER PLACE] After add:', {
@@ -615,7 +627,7 @@ function reduce(s: GS, a: Act): GS {
         })
       }
 
-      // If attacker reached goal zone WITHOUT defender, trigger choice UI
+        // If attacker reached goal zone WITHOUT defender, trigger choice UI
       if (moved.type === 'A' && triggersShoot(moved) && !defender) {
         console.log('[ATTACKER MOVE] Reached goal zone without defender, showing choice')
         // Clear stayedInGoalZone flag if attacker is choosing
@@ -628,6 +640,7 @@ function reduce(s: GS, a: Act): GS {
           ...moveProgress,
           seekerBonusMoveActive: false,
           attackerScoringChoice: moved.id,  // Show STAY / SHOOT choice
+          currentActionPlayerId: moved.controllerPlayerId, // Attacker decides
           // Do NOT switch turn yet - wait for user's choice (STAY or SCORE)
         })
       }
@@ -690,11 +703,17 @@ function reduce(s: GS, a: Act): GS {
 
       if (a.choice === 'score') {
         // Trigger goal duel immediately; turn ends after duel resolves
+        // Find the goalkeeper piece to determine who controls keeper actions
+        const opponentTeam = atk.team === 1 ? 2 : 1
+        const gkPiece = s.pieces.find(p => p.team === opponentTeam && p.type === 'GK')
+        const keeperActionPlayerId = gkPiece?.controllerPlayerId
+        
         return {
           ...s,
           attackerScoringChoice: undefined,
           combat: null,
           duel: { attackerId: atk.id, phase: 'choosing', t1Choice: null, t2Choice: null, result: null },
+          currentActionPlayerId: keeperActionPlayerId, // Keeper chooses first in UI
           revision: bumpRevision(s),
         }
       }
@@ -708,6 +727,7 @@ function reduce(s: GS, a: Act): GS {
         ...finishMatchTurn(s, pieces, progress),
         combat: null,
         attackerScoringChoice: undefined,
+        currentActionPlayerId: undefined, // Clear action player after choice
         revision: bumpRevision(s),
       }
     }
@@ -723,6 +743,11 @@ function reduce(s: GS, a: Act): GS {
       // ATTACKER_SHOOT doesn't count as a move for snitch timing (it's part of attack sequence)
       const progress = progressAfterMove(s, undefined)
       
+      // Find the goalkeeper piece to determine who controls keeper actions
+      const opponentTeam = atk.team === 1 ? 2 : 1
+      const gkPiece = s.pieces.find(p => p.team === opponentTeam && p.type === 'GK')
+      const keeperActionPlayerId = gkPiece?.controllerPlayerId
+      
       // Clear readyToShoot and trigger goal duel; turn ends after duel resolves
       return {
         ...s,
@@ -731,6 +756,7 @@ function reduce(s: GS, a: Act): GS {
           p.id === atk.id ? { ...p, readyToShoot: false } : p
         ),
         duel: { attackerId: atk.id, phase: 'choosing', t1Choice: null, t2Choice: null, result: null },
+        currentActionPlayerId: keeperActionPlayerId, // Keeper chooses first
         revision: bumpRevision(s),
       }
     }
@@ -761,6 +787,11 @@ function reduce(s: GS, a: Act): GS {
         if (triggersShoot(atk)) {
           // If attacker previously stayed, auto-shoot (no choice)
           if (atk.stayedInGoalZone) {
+            // Find the goalkeeper piece to determine who controls keeper actions
+            const opponentTeam = atk.team === 1 ? 2 : 1
+            const gkPiece = s.pieces.find(p => p.team === opponentTeam && p.type === 'GK')
+            const keeperActionPlayerId = gkPiece?.controllerPlayerId
+            
             return {
               ...s,
               pieces: newPieces.map(p => 
@@ -768,6 +799,7 @@ function reduce(s: GS, a: Act): GS {
               ),
               combat: null,
               duel: { attackerId: atk.id, phase: 'choosing', t1Choice: null, t2Choice: null, result: null },
+              currentActionPlayerId: keeperActionPlayerId, // Keeper chooses first
               revision: bumpRevision(s),
             }
           }
@@ -777,6 +809,7 @@ function reduce(s: GS, a: Act): GS {
             pieces: newPieces,
             combat: null,
             attackerScoringChoice: atk.id,  // Show choice UI
+            currentActionPlayerId: atk.controllerPlayerId, // Attacker chooses next
             revision: bumpRevision(s),
           }
         }
@@ -827,7 +860,12 @@ function reduce(s: GS, a: Act): GS {
         t1Choice: a.team === 1 ? a.choice : s.duel.t1Choice,
         t2Choice: a.team === 2 ? a.choice : s.duel.t2Choice,
       }
-      if (!d.t1Choice || !d.t2Choice) return { ...s, duel: d }
+      if (!d.t1Choice || !d.t2Choice) {
+        // Still waiting for the other player's choice
+        return { ...s, duel: d }
+      }
+      
+      // Both choices made, resolve duel
       const atk    = s.pieces.find(p => p.id === d.attackerId)!
       const atkC   = atk.team === 1 ? d.t1Choice : d.t2Choice
       const gkC    = atk.team === 1 ? d.t2Choice : d.t1Choice
@@ -863,6 +901,7 @@ function reduce(s: GS, a: Act): GS {
           ? (isGoal ? (streakBonus ? 0 : nextStreak) : s.streak2) 
           : (isGoal ? 0 : s.streak2),
         streakBonusTeam: streakBonus ? atk.team : null,
+        currentActionPlayerId: undefined, // Clear action player after duel resolves
       }
     }
 
@@ -2007,8 +2046,6 @@ function GamePageInner() {
   // House params — comma-separated lists of houses for each team, passed from the room lobby
   const h1Param  = search.get('h1') || ''
   const h2Param  = search.get('h2') || ''
-  // Captain flag — solo players are always captain; team mode passes ?captain=true for the captain
-  const isCaptain = !isSpectator && search.get('captain') !== 'false'
   // Starter team from coin flip result in room lobby
   const starterParam = search.get('starter')
   const starterTeam = starterParam === '2' ? 2 : (starterParam === '1' ? 1 : 1) // Default to 1 if null
@@ -2017,6 +2054,12 @@ function GamePageInner() {
   console.log('[INIT] Starter team from URL:', starterTeam, 'from param:', starterParam)
 
   /* ── State ────────────────────────────────────────────────────────────── */
+  // Real captain status and team member mappings (declared early for isCaptain)
+  const [dbIsCaptain, setDbIsCaptain] = useState<boolean>(!isSpectator && roomCode.startsWith('SOLO'))
+  
+  // Captain flag — solo players are always captain; team mode uses dbIsCaptain from DB
+  const isCaptain = dbIsCaptain
+  
   // Initialize game state with starter team from coin flip result and unique match ID
   const [gs, disp]           = useReducer(reduce, undefined, () => ({
     ...initGS(`room-${roomCode}`), // Use roomCode as base for match ID for consistency
@@ -2032,6 +2075,10 @@ function GamePageInner() {
   const [hover, setHover]    = useState<string | null>(null)
   const [scoreFlash, setFlash] = useState<Team | null>(null)
   const [celebration, setCelebration] = useState<{ team: Team; points: number; isStreakBonus: boolean } | null>(null)
+  
+  // Team member mappings and current user ID
+  const [teamMembersData, setTeamMembersData] = useState<{ userId: string; username: string; position: string | null; teamId: string; teamNumber: number }[]>([])
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [teamHouses, setTeamHouses] = useState<{ 1: string[]; 2: string[] }>(() => ({
     1: h1Param ? h1Param.split(',').filter(Boolean) : [],
     2: h2Param ? h2Param.split(',').filter(Boolean) : [],
@@ -2093,16 +2140,67 @@ function GamePageInner() {
     // Broadcast to other players via realtime
     chRef.current?.send({ type: 'broadcast', event: 'g', payload: a })
 
-    // Save important actions to database for persistence
-    const shouldSave = a.kind === 'PLACE' || a.kind === 'DDONE' || a.kind === 'MOVE' || a.kind === 'DRESET' || a.kind === 'ATTACKER_CHOICE' || a.kind === 'ATTACKER_SHOOT' || a.kind === 'COMBAT_SPIN' || a.kind === 'COMBAT_RESOLVE' || a.kind === 'COMBAT_REVEAL_COMPLETE' || a.kind === 'END_BONUS_TURN' || a.kind === 'SEEKER_CONTINUE' || a.kind === 'SNITCH_SYNC_WAIT' || a.kind === 'SNITCH_TRIGGER_ENCOUNTER' || a.kind === 'SNITCH_OUTCOME_SPIN' || a.kind === 'SNITCH_OUTCOME_RESOLVE' || a.kind === 'SNITCH_LAND'
-    if (shouldSave && (nextState.revision ?? 0) > expectedRevision) {
+    // Determine which RPC to use based on action type
+    const captainMovementActions = ['PLACE', 'MOVE', 'ASSIGN_BROOM', 'DDONE']
+    const playerActionTypes = ['DUEL', 'ATTACKER_CHOICE', 'ATTACKER_SHOOT']
+    const needsSave = captainMovementActions.includes(a.kind) || playerActionTypes.includes(a.kind) || 
+      ['DRESET', 'COMBAT_SPIN', 'COMBAT_RESOLVE', 'COMBAT_REVEAL_COMPLETE', 'END_BONUS_TURN', 'SEEKER_CONTINUE', 
+       'SNITCH_SYNC_WAIT', 'SNITCH_TRIGGER_ENCOUNTER', 'SNITCH_OUTCOME_SPIN', 'SNITCH_OUTCOME_RESOLVE', 'SNITCH_LAND'].includes(a.kind)
+
+    if (needsSave && (nextState.revision ?? 0) > expectedRevision) {
       void (async () => {
-        const { error } = await supabase.rpc('save_quidditch_game_state', {
-          p_room_code: roomCode,
-          p_game_state: nextState,
-          p_expected_revision: expectedRevision,
-        })
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) return
+
+        let error = null
+
+        // Captain-gated movement actions
+        if (captainMovementActions.includes(a.kind)) {
+          const result = await supabase.rpc('move_piece_captain_only', {
+            p_room_code: roomCode,
+            p_expected_revision: expectedRevision,
+            p_game_state: nextState,
+          })
+          error = result.error
+          if (result.data && !result.data.success) {
+            console.error('[EMIT] Captain movement rejected:', result.data.error)
+            // If permission denied, sync with server state
+            if (result.data.conflict && result.data.game_state) {
+              disp({ kind: 'SYNC', gs: result.data.game_state })
+            }
+          }
+        }
+        // Player-specific action validation
+        else if (playerActionTypes.includes(a.kind)) {
+          // Find the action player ID from current game state
+          const actionPlayerId = nextState.currentActionPlayerId || user.id
+          const result = await supabase.rpc('submit_player_action', {
+            p_room_code: roomCode,
+            p_action_player_id: actionPlayerId,
+            p_expected_revision: expectedRevision,
+            p_game_state: nextState,
+          })
+          error = result.error
+          if (result.data && !result.data.success) {
+            console.error('[EMIT] Player action rejected:', result.data.error)
+            // If permission denied, sync with server state
+            if (result.data.conflict && result.data.game_state) {
+              disp({ kind: 'SYNC', gs: result.data.game_state })
+            }
+          }
+        }
+        // Fallback to generic save for other actions
+        else {
+          const result = await supabase.rpc('save_quidditch_game_state', {
+            p_room_code: roomCode,
+            p_game_state: nextState,
+            p_expected_revision: expectedRevision,
+          })
+          error = result.error
+        }
+
         if (error) {
+          console.error('[EMIT] Database save failed:', error)
           // Silent fail - realtime broadcast handles sync
         }
       })()
@@ -2121,6 +2219,10 @@ function GamePageInner() {
     void (async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user || cancelled) return
+      
+      // Store current user ID
+      setCurrentUserId(user.id)
+      
       const { data: room } = await supabase
         .from('rooms')
         .select('id, mode')
@@ -2129,7 +2231,7 @@ function GamePageInner() {
       if (!room || cancelled) return
       const { data: teams } = await supabase
         .from('teams')
-        .select('id, team_number')
+        .select('id, team_number, captain_id')
         .eq('room_id', room.id)
       const membership = teams && (await supabase
         .from('team_members')
@@ -2138,8 +2240,35 @@ function GamePageInner() {
         .in('team_id', teams.map(team => team.id))
         .maybeSingle()).data
       const verifiedTeam = teams?.find(team => team.id === membership?.team_id)?.team_number
+      
+      // Determine if they are actual captain from DB
+      const isActualCaptain = teams?.some(t => t.captain_id === user.id) || room.mode === 'solo'
+      if (!cancelled) setDbIsCaptain(isActualCaptain)
+      
       if (!cancelled && (verifiedTeam === 1 || verifiedTeam === 2)) setMyTeam(verifiedTeam)
       if (!cancelled) setTeamIdentityReady(true)
+
+      // Fetch ALL team members for piece assignment tracking
+      if (teams && !cancelled) {
+        const { data: allMembers } = await supabase
+          .from('team_members')
+          .select('user_id, position, team_id, profiles(magical_name, house)')
+          .in('team_id', teams.map(t => t.id))
+          
+        if (allMembers && !cancelled) {
+          const membersData = allMembers.map(m => {
+            const team = teams.find(t => t.id === m.team_id)
+            return {
+              userId: m.user_id,
+              username: (m.profiles as any)?.magical_name || 'Unknown',
+              position: m.position,
+              teamId: m.team_id,
+              teamNumber: team?.team_number || 1
+            }
+          })
+          setTeamMembersData(membersData)
+        }
+      }
 
       // Fetch houses for commentator audio — only needed as fallback when URL params are absent
       if (teams && !cancelled) {
@@ -3035,8 +3164,19 @@ function GamePageInner() {
 
   const duelAtk      = gs.duel ? gs.pieces.find(p => p.id === gs.duel!.attackerId) : null
   const combatAtk    = gs.combat ? gs.pieces.find(p => p.id === gs.combat!.attackerId) : null
+  
+  // NEW: Check if current user is the action player (controls the piece involved in the action)
+  const iAmAttackerController = duelAtk?.controllerPlayerId === currentUserId
+  const duelGkPiece = duelAtk ? gs.pieces.find(p => p.team !== duelAtk.team && p.type === 'GK') : null
+  const iAmKeeperController = duelGkPiece?.controllerPlayerId === currentUserId
+  
+  // Legacy: Team-based checks (for UI display purposes, not permission enforcement)
   const iAmAttacker  = duelAtk?.team === myTeam
   const iAmCombatAtk = combatAtk?.team === myTeam
+  
+  // For duel UI: Only show controls if you're the designated action player
+  const canChooseDuel = gs.duel?.phase === 'choosing' && (iAmAttackerController || iAmKeeperController)
+  const myDuelRole = iAmAttackerController ? 'attacker' : iAmKeeperController ? 'keeper' : null
 
   // Derive myChoice purely from gs to prevent sync overwrites causing stuck states
   const myChoice     = gs.duel ? (myTeam === 1 ? gs.duel.t1Choice : gs.duel.t2Choice) : null
@@ -3062,6 +3202,12 @@ function GamePageInner() {
     }
     if (p.team !== myTeam || gs.turn !== myTeam) return
     if ((p.disabledUntilTurn ?? -1) >= gs.turnCount) return
+    
+    // Only captain can select and move pieces
+    if (!isCaptain) {
+      console.log('[CLICK PIECE] Non-captain cannot select pieces for movement')
+      return
+    }
     
     // CRITICAL: Block seeker selection during bonus move
     if (gs.seekerBonusMoveActive && p.type === 'S') {
@@ -3094,6 +3240,12 @@ function GamePageInner() {
     if (isSpectator) return
     const k = `${col}${row}`
     if (gs.phase === 'deployment' && !myDone && dpType && deployable(gs.pieces, myTeam, dpType).includes(k)) {
+      // Only captain can place pieces
+      if (!isCaptain) {
+        console.log('[DEPLOY] Non-captain cannot place pieces')
+        return
+      }
+      
       // Check current count BEFORE placing
       const currentCount = cnt(gs.pieces, myTeam, dpType)
       
@@ -3106,13 +3258,20 @@ function GamePageInner() {
       
       // Place piece
       const id = `${myTeam}-${dpType}-${Date.now()}-${Math.random().toString(36).slice(2)}`
-      emit({ kind: 'PLACE', id, team: myTeam, pt: dpType, col, row })
+      const controller = getPieceController(dpType, currentCount, teamMembersData.filter(m => m.teamNumber === myTeam))
+      emit({ kind: 'PLACE', id, team: myTeam, pt: dpType, col, row, controllerPlayerId: controller?.userId })
       
       // Auto-deselect when limit will be reached after this placement
       if (currentCount + 1 >= MAX[dpType]) setDpType(null)
       return
     }
     if (gs.phase === 'match' && selId && moves.has(k)) {
+      // Only captain can move pieces during match
+      if (!isCaptain) {
+        console.log('[MOVE] Non-captain cannot move pieces')
+        return
+      }
+      
       // Move piece
       emit({ kind: 'MOVE', pid: selId, col, row })
       setMoves(new Set())
@@ -3380,10 +3539,15 @@ function GamePageInner() {
               : count <= 4
                 ? Math.min(pieceBase * 0.5, 58)
                 : Math.min(pieceBase * 0.42, 50)
+          
+          // Find the controlling player's username
+          const controller = teamMembersData.find(m => m.userId === piece.controllerPlayerId)
+          const controllerName = controller?.username || '?'
+          
           return (
             <div
               key={piece.id}
-              className="relative flex h-full w-full items-center justify-center transform transition-all duration-300 ease-out hover:scale-110 focus:outline-none focus:ring-2 focus:ring-amber-400 rounded"
+              className="relative flex flex-col h-full w-full items-center justify-center transform transition-all duration-300 ease-out hover:scale-110 focus:outline-none focus:ring-2 focus:ring-amber-400 rounded"
               onClick={e => {
                 e.stopPropagation()
                 // Every piece owns a separate side-by-side slot, including five-piece cells.
@@ -3400,8 +3564,21 @@ function GamePageInner() {
               }}
               tabIndex={0}
               role="button"
-              aria-label={`${piece.type} for team ${piece.team} at ${col} ${row}${piece.disabledUntilTurn && (piece.disabledUntilTurn >= gs.turnCount) ? ' - frozen' : ''}`}
+              aria-label={`${piece.type} controlled by ${controllerName} for team ${piece.team} at ${col} ${row}${piece.disabledUntilTurn && (piece.disabledUntilTurn >= gs.turnCount) ? ' - frozen' : ''}`}
             >
+              {/* Player username above piece */}
+              {piece.controllerPlayerId && (
+                <div className="absolute -top-4 left-1/2 -translate-x-1/2 whitespace-nowrap pointer-events-none z-10">
+                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                    piece.team === 1 
+                      ? 'bg-purple-500/90 text-purple-50' 
+                      : 'bg-amber-500/90 text-amber-50'
+                  } shadow-sm`}>
+                    {controllerName}
+                  </span>
+                </div>
+              )}
+              
               <PieceShape type={piece.type} team={piece.team} selected={selId === piece.id} size={pieceSize} broomSpeed={piece.broomSpeed} disabled={(piece.disabledUntilTurn ?? -1) >= gs.turnCount} />
               {(piece.disabledUntilTurn ?? -1) >= gs.turnCount && <span className="absolute top-1 text-xs animate-pulse">❄️</span>}
             </div>
@@ -3485,7 +3662,11 @@ function GamePageInner() {
 
       <div className="relative z-10 shrink-0 text-center py-2 bg-black/30 border-b border-white/5 text-sm px-4 font-semibold">
         {gs.phase === 'deployment' && !myDone && (
-          <span className="text-slate-300">⚔️ TACTICAL DEPLOYMENT — place your pieces, then click Deploy</span>
+          <span className="text-slate-300">
+            {isCaptain 
+              ? '⚔️ TACTICAL DEPLOYMENT — place your pieces, then click Deploy' 
+              : '👀 WATCHING CAPTAIN DEPLOY — you will control your assigned piece during the match'}
+          </span>
         )}
         {gs.phase === 'deployment' && myDone && !(myTeam === 1 ? gs.d2 : gs.d1) && (
           <span className="text-slate-400 animate-pulse">⏳ Waiting for {tn(myTeam === 1 ? 2 : 1)} to finish deployment…</span>
@@ -3508,45 +3689,63 @@ function GamePageInner() {
         )}
         {gs.attackerScoringChoice && (() => {
           const atk = gs.pieces.find(p => p.id === gs.attackerScoringChoice)
-          return atk && atk.team === myTeam && (
-            <div className="flex flex-col items-center gap-2 animate-in fade-in slide-in-from-top-4 duration-300">
-              <span className="text-amber-400 font-bold text-sm">
-                🏆 COMBAT WON! Choose your action:
-              </span>
-              <div className="flex gap-3">
-                <button
-                  disabled={attackerChoicePendingRef.current}
-                  onClick={() => {
-                    if (attackerChoicePendingRef.current || !gs.attackerScoringChoice) return
-                    attackerChoicePendingRef.current = true
-                    emit({ kind: 'ATTACKER_CHOICE', choice: 'stay' })
-                    setSel(null)
-                    setMoves(new Set())
-                  }}
-                  className="rounded-lg border-2 border-blue-500/60 bg-blue-900/90 px-5 py-2 text-sm font-black text-blue-200 hover:bg-blue-800 hover:border-blue-400 transition-all shadow-lg disabled:opacity-50 disabled:pointer-events-none"
-                >
-                  🛡️ STAY IN POSITION
-                </button>
-                <button
-                  disabled={attackerChoicePendingRef.current}
-                  onClick={() => {
-                    if (attackerChoicePendingRef.current || !gs.attackerScoringChoice) return
-                    attackerChoicePendingRef.current = true
-                    emit({ kind: 'ATTACKER_CHOICE', choice: 'score' })
-                    setSel(null)
-                    setMoves(new Set())
-                  }}
-                  className="rounded-lg border-2 border-amber-500/70 bg-amber-950/80 px-5 py-2 text-sm font-black text-amber-200 hover:bg-amber-800 hover:border-amber-400 transition-all shadow-lg shadow-amber-500/20 animate-pulse disabled:opacity-50 disabled:pointer-events-none"
-                >
-                  ⚽ SHOOT GOAL
-                </button>
+          const iAmAttackerController = atk?.controllerPlayerId === currentUserId
+          
+          // Show controls only to the attacker controller
+          if (iAmAttackerController) {
+            return (
+              <div className="flex flex-col items-center gap-2 animate-in fade-in slide-in-from-top-4 duration-300">
+                <span className="text-amber-400 font-bold text-sm">
+                  🏆 COMBAT WON! Choose your action:
+                </span>
+                <div className="flex gap-3">
+                  <button
+                    disabled={attackerChoicePendingRef.current}
+                    onClick={() => {
+                      if (attackerChoicePendingRef.current || !gs.attackerScoringChoice) return
+                      attackerChoicePendingRef.current = true
+                      emit({ kind: 'ATTACKER_CHOICE', choice: 'stay' })
+                      setSel(null)
+                      setMoves(new Set())
+                    }}
+                    className="rounded-lg border-2 border-blue-500/60 bg-blue-900/90 px-5 py-2 text-sm font-black text-blue-200 hover:bg-blue-800 hover:border-blue-400 transition-all shadow-lg disabled:opacity-50 disabled:pointer-events-none"
+                  >
+                    🛡️ STAY IN POSITION
+                  </button>
+                  <button
+                    disabled={attackerChoicePendingRef.current}
+                    onClick={() => {
+                      if (attackerChoicePendingRef.current || !gs.attackerScoringChoice) return
+                      attackerChoicePendingRef.current = true
+                      emit({ kind: 'ATTACKER_CHOICE', choice: 'score' })
+                      setSel(null)
+                      setMoves(new Set())
+                    }}
+                    className="rounded-lg border-2 border-amber-500/70 bg-amber-950/80 px-5 py-2 text-sm font-black text-amber-200 hover:bg-amber-800 hover:border-amber-400 transition-all shadow-lg shadow-amber-500/20 animate-pulse disabled:opacity-50 disabled:pointer-events-none"
+                  >
+                    ⚽ SHOOT GOAL
+                  </button>
+                </div>
               </div>
-            </div>
-          )
+            )
+          } else if (atk && atk.team === myTeam) {
+            // Show waiting message to other team members
+            const controllerName = teamMembersData.find(m => m.userId === atk.controllerPlayerId)?.username || 'player'
+            return (
+              <div className="flex flex-col items-center gap-2 animate-in fade-in slide-in-from-top-4 duration-300">
+                <span className="text-slate-400 font-bold text-sm animate-pulse">
+                  ⏳ Waiting for {controllerName} to choose...
+                </span>
+              </div>
+            )
+          }
+          return null
         })()}
         {selId && (() => {
           const selectedPiece = gs.pieces.find(p => p.id === selId)
-          return selectedPiece && selectedPiece.readyToShoot && selectedPiece.team === myTeam && gs.turn === myTeam && (
+          const iAmPieceController = selectedPiece?.controllerPlayerId === currentUserId
+          
+          return selectedPiece && selectedPiece.readyToShoot && iAmPieceController && gs.turn === myTeam && (
             <div className="flex flex-col items-center gap-2 animate-in fade-in slide-in-from-top-4 duration-300">
               <span className="text-amber-400 font-bold text-sm">
                 ⚽ READY TO SHOOT!
@@ -3591,53 +3790,90 @@ function GamePageInner() {
           </p>
           {gs.phase === 'deployment' && !myDone && myTeam === 1 && (
             <>
-              <div className="text-sm text-slate-500 mb-3 flex justify-between items-center">
-                <span className="text-slate-300 font-bold">⬡ Goalkeeper</span>
-                <span className="text-emerald-400">1/1 ✓</span>
-              </div>
-              {(['D', 'A', 'S'] as PieceType[]).map(pt => {
-                const cur  = cnt(gs.pieces, 1, pt)
-                const max  = MAX[pt]
-                const full = cur >= max
-                const lbl  = pt === 'D' ? 'Defender' : pt === 'A' ? 'Attacker' : 'Seeker'
-                const hint = pt === 'D' ? 'Rows 4-5' : pt === 'A' ? 'Rows 2-5' : 'Any Row'
-                return (
+              {/* Captain-only controls */}
+              {isCaptain ? (
+                <>
+                  <div className="text-sm text-slate-500 mb-3 flex justify-between items-center">
+                    <span className="text-slate-300 font-bold">⬡ Goalkeeper</span>
+                    <span className="text-emerald-400">1/1 ✓</span>
+                  </div>
+                  {(['D', 'A', 'S'] as PieceType[]).map(pt => {
+                    const cur  = cnt(gs.pieces, 1, pt)
+                    const max  = MAX[pt]
+                    const full = cur >= max
+                    const lbl  = pt === 'D' ? 'Defender' : pt === 'A' ? 'Attacker' : 'Seeker'
+                    const hint = pt === 'D' ? 'Rows 4-5' : pt === 'A' ? 'Rows 2-5' : 'Any Row'
+                    return (
+                      <button
+                        key={pt}
+                        disabled={full}
+                        onClick={() => !full && setDpType(dpType === pt ? null : pt)}
+                        className={`
+                          w-full mb-3 px-4 py-3 rounded-xl text-base font-bold text-left border
+                          transition-all duration-150 flex justify-between items-center
+                          ${full
+                            ? 'opacity-40 border-slate-700 cursor-not-allowed text-slate-500'
+                            : dpType === pt
+                              ? 'border-white bg-white/15 text-white scale-105 shadow-[0_0_12px_rgba(255,255,255,0.25)]'
+                              : 'border-purple-500/30 text-purple-300/80 hover:text-white hover:border-purple-400 hover:bg-purple-500/10'}
+                        `}
+                      >
+                        <div>
+                          <div className="flex items-center gap-3">
+                            <PieceShape type={pt} team={1} selected={false} size={24} />
+                            <span>{lbl}</span>
+                          </div>
+                          <div className="text-xs text-slate-500 mt-1">{hint}</div>
+                        </div>
+                        <span className={full ? 'text-emerald-400 text-sm' : 'text-slate-500 text-sm'}>{cur}/{max}</span>
+                      </button>
+                    )
+                  })}
+                  {dpType && <p className="text-sm text-slate-400 mb-3 text-center animate-pulse">Click a cell to place</p>}
+
+                  {renderBroomPanel(1)}
+
                   <button
-                    key={pt}
-                    disabled={full}
-                    onClick={() => !full && setDpType(dpType === pt ? null : pt)}
-                    className={`
-                      w-full mb-3 px-4 py-3 rounded-xl text-base font-bold text-left border
-                      transition-all duration-150 flex justify-between items-center
-                      ${full
-                        ? 'opacity-40 border-slate-700 cursor-not-allowed text-slate-500'
-                        : dpType === pt
-                          ? 'border-white bg-white/15 text-white scale-105 shadow-[0_0_12px_rgba(255,255,255,0.25)]'
-                          : 'border-purple-500/30 text-purple-300/80 hover:text-white hover:border-purple-400 hover:bg-purple-500/10'}
-                    `}
+                    disabled={!canDeploy}
+                    onClick={() => canDeploy && emit({ kind: 'DDONE', team: myTeam })}
+                    className={`w-full py-4 rounded-xl text-base font-black transition-all duration-150 ${canDeploy ? 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-[0_0_20px_rgba(16,185,129,0.5)]' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}
                   >
-                    <div>
-                      <div className="flex items-center gap-3">
-                        <PieceShape type={pt} team={1} selected={false} size={24} />
-                        <span>{lbl}</span>
-                      </div>
-                      <div className="text-xs text-slate-500 mt-1">{hint}</div>
-                    </div>
-                    <span className={full ? 'text-emerald-400 text-sm' : 'text-slate-500 text-sm'}>{cur}/{max}</span>
+                    {canDeploy ? '✅ Deploy!' : canFinish ? '⚠️ Fix broom assignment' : 'Place all pieces'}
                   </button>
-                )
-              })}
-              {dpType && <p className="text-sm text-slate-400 mb-3 text-center animate-pulse">Click a cell to place</p>}
-
-              {renderBroomPanel(1)}
-
-              <button
-                disabled={!canDeploy}
-                onClick={() => canDeploy && emit({ kind: 'DDONE', team: myTeam })}
-                className={`w-full py-4 rounded-xl text-base font-black transition-all duration-150 ${canDeploy ? 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-[0_0_20px_rgba(16,185,129,0.5)]' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}
-              >
-                {canDeploy ? '✅ Deploy!' : canFinish ? '⚠️ Fix broom assignment' : 'Place all pieces'}
-              </button>
+                </>
+              ) : (
+                <>
+                  {/* Read-only view for non-captains */}
+                  <div className="text-center mb-6 p-4 bg-purple-500/10 border border-purple-500/30 rounded-xl">
+                    <p className="text-purple-300 font-bold text-sm mb-2">👑 CAPTAIN IS CONFIGURING</p>
+                    <p className="text-slate-400 text-xs">You are viewing the formation in <span className="text-white font-bold">READ ONLY</span> mode</p>
+                  </div>
+                  
+                  {/* Show current deployment status */}
+                  <div className="space-y-3 mb-6">
+                    <div className="text-sm text-slate-500 flex justify-between items-center">
+                      <span className="text-slate-300 font-bold">⬡ Goalkeeper</span>
+                      <span className="text-emerald-400">1/1 ✓</span>
+                    </div>
+                    {(['D', 'A', 'S'] as PieceType[]).map(pt => {
+                      const cur  = cnt(gs.pieces, 1, pt)
+                      const max  = MAX[pt]
+                      const lbl  = pt === 'D' ? 'Defender' : pt === 'A' ? 'Attacker' : 'Seeker'
+                      return (
+                        <div key={pt} className="flex justify-between items-center text-sm">
+                          <div className="flex items-center gap-2">
+                            <PieceShape type={pt} team={1} selected={false} size={20} />
+                            <span className="text-slate-400">{lbl}</span>
+                          </div>
+                          <span className={cur >= max ? 'text-emerald-400' : 'text-slate-500'}>{cur}/{max}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  
+                  <p className="text-xs text-slate-500 text-center animate-pulse">Waiting for captain to complete deployment...</p>
+                </>
+              )}
             </>
           )}
           {gs.phase === 'match' && (
@@ -3707,53 +3943,90 @@ function GamePageInner() {
           </p>
           {gs.phase === 'deployment' && !myDone && myTeam === 2 && (
             <>
-              <div className="text-sm text-slate-500 mb-3 flex justify-between items-center">
-                <span className="text-slate-300 font-bold">⬡ Goalkeeper</span>
-                <span className="text-emerald-400">1/1 ✓</span>
-              </div>
-              {(['D', 'A', 'S'] as PieceType[]).map(pt => {
-                const cur  = cnt(gs.pieces, 2, pt)
-                const max  = MAX[pt]
-                const full = cur >= max
-                const lbl  = pt === 'D' ? 'Defender' : pt === 'A' ? 'Attacker' : 'Seeker'
-                const hint = pt === 'D' ? 'Rows 1-2' : pt === 'A' ? 'Rows 1-4' : 'Any Row'
-                return (
+              {/* Captain-only controls */}
+              {isCaptain ? (
+                <>
+                  <div className="text-sm text-slate-500 mb-3 flex justify-between items-center">
+                    <span className="text-slate-300 font-bold">⬡ Goalkeeper</span>
+                    <span className="text-emerald-400">1/1 ✓</span>
+                  </div>
+                  {(['D', 'A', 'S'] as PieceType[]).map(pt => {
+                    const cur  = cnt(gs.pieces, 2, pt)
+                    const max  = MAX[pt]
+                    const full = cur >= max
+                    const lbl  = pt === 'D' ? 'Defender' : pt === 'A' ? 'Attacker' : 'Seeker'
+                    const hint = pt === 'D' ? 'Rows 1-2' : pt === 'A' ? 'Rows 1-4' : 'Any Row'
+                    return (
+                      <button
+                        key={pt}
+                        disabled={full}
+                        onClick={() => !full && setDpType(dpType === pt ? null : pt)}
+                        className={`
+                          w-full mb-3 px-4 py-3 rounded-xl text-base font-bold text-left border
+                          transition-all duration-150 flex justify-between items-center
+                          ${full
+                            ? 'opacity-40 border-slate-700 cursor-not-allowed text-slate-500'
+                            : dpType === pt
+                              ? 'border-white bg-white/15 text-white scale-105 shadow-[0_0_12px_rgba(255,255,255,0.25)]'
+                              : 'border-amber-500/30 text-amber-300/80 hover:text-white hover:border-amber-400 hover:bg-amber-500/10'}
+                        `}
+                      >
+                        <div>
+                          <div className="flex items-center gap-3">
+                            <PieceShape type={pt} team={2} selected={false} size={24} />
+                            <span>{lbl}</span>
+                          </div>
+                          <div className="text-xs text-slate-500 mt-1">{hint}</div>
+                        </div>
+                        <span className={full ? 'text-emerald-400 text-sm' : 'text-slate-500 text-sm'}>{cur}/{max}</span>
+                      </button>
+                    )
+                  })}
+                  {dpType && <p className="text-sm text-slate-400 mb-3 text-center animate-pulse">Click a cell to place</p>}
+
+                  {renderBroomPanel(2)}
+
                   <button
-                    key={pt}
-                    disabled={full}
-                    onClick={() => !full && setDpType(dpType === pt ? null : pt)}
-                    className={`
-                      w-full mb-3 px-4 py-3 rounded-xl text-base font-bold text-left border
-                      transition-all duration-150 flex justify-between items-center
-                      ${full
-                        ? 'opacity-40 border-slate-700 cursor-not-allowed text-slate-500'
-                        : dpType === pt
-                          ? 'border-white bg-white/15 text-white scale-105 shadow-[0_0_12px_rgba(255,255,255,0.25)]'
-                          : 'border-amber-500/30 text-amber-300/80 hover:text-white hover:border-amber-400 hover:bg-amber-500/10'}
-                    `}
+                    disabled={!canDeploy}
+                    onClick={() => canDeploy && emit({ kind: 'DDONE', team: myTeam })}
+                    className={`w-full py-4 rounded-xl text-base font-black transition-all duration-150 ${canDeploy ? 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-[0_0_20px_rgba(16,185,129,0.5)]' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}
                   >
-                    <div>
-                      <div className="flex items-center gap-3">
-                        <PieceShape type={pt} team={2} selected={false} size={24} />
-                        <span>{lbl}</span>
-                      </div>
-                      <div className="text-xs text-slate-500 mt-1">{hint}</div>
-                    </div>
-                    <span className={full ? 'text-emerald-400 text-sm' : 'text-slate-500 text-sm'}>{cur}/{max}</span>
+                    {canDeploy ? '✅ Deploy!' : canFinish ? '⚠️ Fix broom assignment' : 'Place all pieces'}
                   </button>
-                )
-              })}
-              {dpType && <p className="text-sm text-slate-400 mb-3 text-center animate-pulse">Click a cell to place</p>}
-
-              {renderBroomPanel(2)}
-
-              <button
-                disabled={!canDeploy}
-                onClick={() => canDeploy && emit({ kind: 'DDONE', team: myTeam })}
-                className={`w-full py-4 rounded-xl text-base font-black transition-all duration-150 ${canDeploy ? 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-[0_0_20px_rgba(16,185,129,0.5)]' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}
-              >
-                {canDeploy ? '✅ Deploy!' : canFinish ? '⚠️ Fix broom assignment' : 'Place all pieces'}
-              </button>
+                </>
+              ) : (
+                <>
+                  {/* Read-only view for non-captains */}
+                  <div className="text-center mb-6 p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl">
+                    <p className="text-amber-300 font-bold text-sm mb-2">👑 CAPTAIN IS CONFIGURING</p>
+                    <p className="text-slate-400 text-xs">You are viewing the formation in <span className="text-white font-bold">READ ONLY</span> mode</p>
+                  </div>
+                  
+                  {/* Show current deployment status */}
+                  <div className="space-y-3 mb-6">
+                    <div className="text-sm text-slate-500 flex justify-between items-center">
+                      <span className="text-slate-300 font-bold">⬡ Goalkeeper</span>
+                      <span className="text-emerald-400">1/1 ✓</span>
+                    </div>
+                    {(['D', 'A', 'S'] as PieceType[]).map(pt => {
+                      const cur  = cnt(gs.pieces, 2, pt)
+                      const max  = MAX[pt]
+                      const lbl  = pt === 'D' ? 'Defender' : pt === 'A' ? 'Attacker' : 'Seeker'
+                      return (
+                        <div key={pt} className="flex justify-between items-center text-sm">
+                          <div className="flex items-center gap-2">
+                            <PieceShape type={pt} team={2} selected={false} size={20} />
+                            <span className="text-slate-400">{lbl}</span>
+                          </div>
+                          <span className={cur >= max ? 'text-emerald-400' : 'text-slate-500'}>{cur}/{max}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  
+                  <p className="text-xs text-slate-500 text-center animate-pulse">Waiting for captain to complete deployment...</p>
+                </>
+              )}
             </>
           )}
           {gs.phase === 'match' && (
@@ -3915,36 +4188,55 @@ function GamePageInner() {
               <>
                 <div className="text-7xl mb-4 animate-bounce">⚽</div>
                 <h2 className="text-5xl font-black text-white mb-2 drop-shadow-[0_0_25px_rgba(255,255,255,0.4)]">GOAL DUEL</h2>
-                <p className={`text-base mb-8 font-semibold ${iAmAttacker ? 'text-orange-400' : 'text-sky-400'}`}>
-                  {iAmAttacker ? '🏹 ATTACKER — choose your shot direction' : '🧤 GOALKEEPER — choose your dive direction'}
-                </p>
-                {!myChoice ? (
-                  <div className="grid grid-cols-3 gap-4">
-                    {(['LEFT', 'MIDDLE', 'RIGHT'] as Choice[]).map(c => (
-                      <button
-                        key={c}
-                        onClick={() => chooseDuel(c)}
-                        className={`py-8 rounded-2xl border-2 font-black text-lg transition-all duration-150 hover:scale-105 active:scale-95 ${
-                          iAmAttacker
-                            ? 'border-amber-500 bg-amber-500/15 text-amber-300 hover:bg-amber-500/30 shadow-[0_0_20px_rgba(251,191,36,0.2)]'
-                            : 'border-purple-500 bg-purple-500/15 text-purple-300 hover:bg-purple-500/30 shadow-[0_0_20px_rgba(168,85,247,0.2)]'
-                        }`}
-                      >
-                        <div className="text-3xl mb-2">{c === 'LEFT' ? '◀' : c === 'RIGHT' ? '▶' : '●'}</div>
-                        <div className="text-sm">{c}</div>
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="py-10 text-slate-400">
-                    <div className="text-5xl mb-3">✓</div>
-                    <p className="text-lg">You chose <span className="text-white font-black">{myChoice}</span></p>
-                    {oppHasChosen ? (
-                      <p className="text-base mt-4 font-bold text-emerald-400 animate-pulse">✅ Opponent has locked in their choice!</p>
+                
+                {/* Show controls only to the designated action player */}
+                {canChooseDuel ? (
+                  <>
+                    <p className={`text-base mb-8 font-semibold ${myDuelRole === 'attacker' ? 'text-orange-400' : 'text-sky-400'}`}>
+                      {myDuelRole === 'attacker' ? '🏹 ATTACKER — choose your shot direction' : '🧤 GOALKEEPER — choose your dive direction'}
+                    </p>
+                    {!myChoice ? (
+                      <div className="grid grid-cols-3 gap-4">
+                        {(['LEFT', 'MIDDLE', 'RIGHT'] as Choice[]).map(c => (
+                          <button
+                            key={c}
+                            onClick={() => chooseDuel(c)}
+                            className={`py-8 rounded-2xl border-2 font-black text-lg transition-all duration-150 hover:scale-105 active:scale-95 ${
+                              myDuelRole === 'attacker'
+                                ? 'border-amber-500 bg-amber-500/15 text-amber-300 hover:bg-amber-500/30 shadow-[0_0_20px_rgba(251,191,36,0.2)]'
+                                : 'border-purple-500 bg-purple-500/15 text-purple-300 hover:bg-purple-500/30 shadow-[0_0_20px_rgba(168,85,247,0.2)]'
+                            }`}
+                          >
+                            <div className="text-3xl mb-2">{c === 'LEFT' ? '◀' : c === 'RIGHT' ? '▶' : '●'}</div>
+                            <div className="text-sm">{c}</div>
+                          </button>
+                        ))}
+                      </div>
                     ) : (
-                      <p className="text-sm mt-4 animate-pulse">⏳ Waiting for opponent…</p>
+                      <div className="py-10 text-slate-400">
+                        <div className="text-5xl mb-3">✓</div>
+                        <p className="text-lg">You chose <span className="text-white font-black">{myChoice}</span></p>
+                        {oppHasChosen ? (
+                          <p className="text-base mt-4 font-bold text-emerald-400 animate-pulse">✅ Opponent has locked in their choice!</p>
+                        ) : (
+                          <p className="text-sm mt-4 animate-pulse">⏳ Waiting for opponent…</p>
+                        )}
+                      </div>
                     )}
-                  </div>
+                  </>
+                ) : (
+                  <>
+                    {/* Waiting message for other players */}
+                    <p className="text-base mb-8 font-semibold text-slate-400">
+                      {iAmAttacker ? '⏳ Your attacker is choosing...' : '⏳ Your goalkeeper is choosing...'}
+                    </p>
+                    <div className="py-10 text-slate-500">
+                      <div className="text-5xl mb-3 animate-pulse">⏳</div>
+                      <p className="text-lg">Waiting for {duelAtk && teamMembersData.find(m => m.userId === duelAtk.controllerPlayerId)?.username || 'player'} 
+                        {' '}and {duelGkPiece && teamMembersData.find(m => m.userId === duelGkPiece.controllerPlayerId)?.username || 'goalkeeper'}...</p>
+                      <p className="text-sm mt-4 animate-pulse">They are making their choices</p>
+                    </div>
+                  </>
                 )}
               </>
             )}
