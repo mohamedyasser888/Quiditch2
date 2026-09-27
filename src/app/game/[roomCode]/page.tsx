@@ -591,8 +591,14 @@ function reduce(s: GS, a: Act): GS {
       )
       const moved = pieces.find(p => p.id === a.pid)!
       
-      console.log('[MOVE] Piece moved:', { id: moved.id, type: moved.type, to: `${a.col}${a.row}`, turnCount: s.turnCount })
+      console.log('[MOVE] Piece moved:', { id: moved.id, type: moved.type, to: `${a.col}${a.row}`, phase: s.phase })
       
+      // DEPLOYMENT PHASE: Simple move, no game logic
+      if (s.phase === 'deployment') {
+        return { ...s, pieces, revision: bumpRevision(s) }
+      }
+      
+      // MATCH PHASE: Full game logic
       // If making a move during bonus turn, clear the bonus state
       const wasBonusMoveActive = s.seekerBonusMoveActive
       
@@ -3185,6 +3191,28 @@ function GamePageInner() {
   /* ── Handlers ─────────────────────────────────────────────────────────── */
   function clickPiece(p: Piece) {
     if (isSpectator || !teamIdentityReady) return
+    
+    // DEPLOYMENT PHASE: Allow captain to select pieces to move them
+    if (gs.phase === 'deployment' && !myDone) {
+      if (!isCaptain) {
+        console.log('[DEPLOY] Non-captain cannot select pieces')
+        return
+      }
+      if (p.team !== myTeam) return
+      
+      // Toggle selection
+      if (selId === p.id) {
+        setSel(null)
+        setMoves(new Set())
+      } else {
+        setSel(p.id)
+        // Show valid cells where this piece can move
+        setMoves(new Set(deployable(gs.pieces, myTeam, p.type)))
+      }
+      return
+    }
+    
+    // MATCH PHASE: Normal game logic
     if (gs.duel || gs.combat || gs.bludger || gs.phase !== 'match') return
     
     // CRITICAL: Block all piece selection while attacker scoring choice UI is shown
@@ -3239,32 +3267,50 @@ function GamePageInner() {
   function clickCell(col: Col, row: number) {
     if (isSpectator) return
     const k = `${col}${row}`
-    if (gs.phase === 'deployment' && !myDone && dpType && deployable(gs.pieces, myTeam, dpType).includes(k)) {
-      // Only captain can place pieces
+    
+    // DEPLOYMENT PHASE: Handle both placing new pieces and moving existing pieces
+    if (gs.phase === 'deployment' && !myDone) {
+      // Only captain can interact during deployment
       if (!isCaptain) {
-        console.log('[DEPLOY] Non-captain cannot place pieces')
+        console.log('[DEPLOY] Non-captain cannot modify deployment')
         return
       }
       
-      // Check current count BEFORE placing
-      const currentCount = cnt(gs.pieces, myTeam, dpType)
-      
-      // Don't allow placement if limit already reached
-      if (currentCount >= MAX[dpType]) {
-        console.log(`[DEPLOY] Cannot place ${dpType}: limit ${MAX[dpType]} already reached`)
-        setDpType(null)
+      // Case 1: Moving an existing selected piece
+      if (selId && moves.has(k)) {
+        console.log('[DEPLOY] Moving piece to:', k)
+        emit({ kind: 'MOVE', pid: selId, col, row })
+        setSel(null)
+        setMoves(new Set())
         return
       }
       
-      // Place piece
-      const id = `${myTeam}-${dpType}-${Date.now()}-${Math.random().toString(36).slice(2)}`
-      const controller = getPieceController(dpType, currentCount, teamMembersData.filter(m => m.teamNumber === myTeam))
-      emit({ kind: 'PLACE', id, team: myTeam, pt: dpType, col, row, controllerPlayerId: controller?.userId })
+      // Case 2: Placing a new piece
+      if (dpType && deployable(gs.pieces, myTeam, dpType).includes(k)) {
+        // Check current count BEFORE placing
+        const currentCount = cnt(gs.pieces, myTeam, dpType)
+        
+        // Don't allow placement if limit already reached
+        if (currentCount >= MAX[dpType]) {
+          console.log(`[DEPLOY] Cannot place ${dpType}: limit ${MAX[dpType]} already reached`)
+          setDpType(null)
+          return
+        }
+        
+        // Place piece
+        const id = `${myTeam}-${dpType}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        const controller = getPieceController(dpType, currentCount, teamMembersData.filter(m => m.teamNumber === myTeam))
+        emit({ kind: 'PLACE', id, team: myTeam, pt: dpType, col, row, controllerPlayerId: controller?.userId })
+        
+        // Auto-deselect when limit will be reached after this placement
+        if (currentCount + 1 >= MAX[dpType]) setDpType(null)
+        return
+      }
       
-      // Auto-deselect when limit will be reached after this placement
-      if (currentCount + 1 >= MAX[dpType]) setDpType(null)
       return
     }
+    
+    // MATCH PHASE: Only allow piece movement during match
     if (gs.phase === 'match' && selId && moves.has(k)) {
       // Only captain can move pieces during match
       if (!isCaptain) {
@@ -3664,7 +3710,7 @@ function GamePageInner() {
         {gs.phase === 'deployment' && !myDone && (
           <span className="text-slate-300">
             {isCaptain 
-              ? '⚔️ TACTICAL DEPLOYMENT — place your pieces, then click Deploy' 
+              ? '⚔️ TACTICAL DEPLOYMENT — place pieces, move them, assign broom speeds, then Deploy' 
               : '👀 WATCHING CAPTAIN DEPLOY — you will control your assigned piece during the match'}
           </span>
         )}
@@ -3829,7 +3875,10 @@ function GamePageInner() {
                       </button>
                     )
                   })}
-                  {dpType && <p className="text-sm text-slate-400 mb-3 text-center animate-pulse">Click a cell to place</p>}
+                  <div className="text-xs text-slate-400 mb-3 text-center space-y-1">
+                    {dpType && <p className="animate-pulse text-white">📍 Click a cell to place</p>}
+                    {!dpType && <p>💡 Click a piece to move it</p>}
+                  </div>
 
                   {renderBroomPanel(1)}
 
@@ -3982,7 +4031,10 @@ function GamePageInner() {
                       </button>
                     )
                   })}
-                  {dpType && <p className="text-sm text-slate-400 mb-3 text-center animate-pulse">Click a cell to place</p>}
+                  <div className="text-xs text-slate-400 mb-3 text-center space-y-1">
+                    {dpType && <p className="animate-pulse text-white">📍 Click a cell to place</p>}
+                    {!dpType && <p>💡 Click a piece to move it</p>}
+                  </div>
 
                   {renderBroomPanel(2)}
 
