@@ -1,89 +1,17 @@
 {
-  "version": 2,
-  "regions": ["fra1"],
-  "github": {
-    "silent": true
-  },
   "buildCommand": "npm run build",
-  "installCommand": "npm ci --prefer-offline --no-audit",
-  "framework": "nextjs",
-  "env": {
-    "NEXT_TELEMETRY_DISABLED": "1",
-    "BUILD_TIMESTAMP": "@now"
-  },
-  "build": {
-    "env": {
-      "NEXT_TELEMETRY_DISABLED": "1",
-      "BUILD_TIMESTAMP": "@now"
-    }
-  },
+  "outputDirectory": ".next",
+  "cleanUrls": true,
+  "trailingSlash": false,
   "headers": [
     {
       "source": "/(.*)",
       "headers": [
         {
-          "key": "X-Content-Type-Options",
-          "value": "nosniff"
-        },
-        {
-          "key": "X-Frame-Options",
-          "value": "SAMEORIGIN"
-        },
-        {
-          "key": "X-XSS-Protection",
-          "value": "1; mode=block"
-        }
-      ]
-    },
-    {
-      "source": "/sw.js",
-      "headers": [
-        {
           "key": "Cache-Control",
           "value": "public, max-age=0, must-revalidate"
-        },
-        {
-          "key": "Service-Worker-Allowed",
-          "value": "/"
-        }
-      ]
-    },
-    {
-      "source": "/(.*).(webp|png|jpg|jpeg|gif|ico|svg)",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "public, max-age=31536000, immutable"
-        },
-        {
-          "key": "CDN-Cache-Control",
-          "value": "public, max-age=31536000, immutable"
-        }
-      ]
-    },
-    {
-      "source": "/_next/static/(.*)",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "public, max-age=31536000, immutable"
-        },
-        {
-          "key": "CDN-Cache-Control",
-          "value": "public, max-age=31536000, immutable"
-        }
-      ]
-    },
-    {
-      "source": "/manifest.json",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "public, max-age=86400"
         }
       ]
     }
-  ],
-  "trailingSlash": false,
-  "cleanUrls": true
+  ]
 }
