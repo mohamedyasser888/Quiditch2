@@ -1,6 +1,6 @@
 {
   "name": "quiditch",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "description": "A magical multiplayer Quidditch game built with Next.js and Supabase",
   "author": "Quidditch Academy Team",
