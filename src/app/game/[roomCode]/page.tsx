@@ -395,26 +395,14 @@ function ensureSnitchWaitActive(s: GS): Partial<GS> {
   const seekers = seekersOnSnitch(s.pieces, s.snitchPos)
   if (seekers.length === 0) return {}
 
-  const bothTeamsPresent = new Set(seekers.map(seeker => seeker.team)).size >= 2
   const turnsCompleted = getSnitchWaitTurnsCompleted(s)
-
-  // Both seekers already present — credit one completed turn so one more turn-end triggers the wheel
-  if (turnsCompleted === 0 && bothTeamsPresent) {
-    console.log('[SNITCH] Both seekers on snitch — wait progress 1/2')
-    return {
-      snitchWaitTurnsCompleted: 1,
-      snitchEncounterPending: true,
-      snitchEncounterDelayTurns: undefined,
-      snitchWheelContext: s.snitchWheelContext ?? 'seeker',
-    }
-  }
 
   if (turnsCompleted !== undefined) return {}
 
-  const initialTurns = bothTeamsPresent ? 1 : 0
-  console.log('[SNITCH] Seekers on snitch — wait timer started (' + initialTurns + '/2 turns)')
+  // Start wait counter at -1 (need 2 full moves: -1 -> 0 -> 1 -> 2)
+  console.log('[SNITCH] Seekers on snitch — wait timer started (-1/2 turns, need 2 full moves)')
   return {
-    snitchWaitTurnsCompleted: initialTurns,
+    snitchWaitTurnsCompleted: -1,
     snitchEncounterPending: true,
     snitchEncounterDelayTurns: undefined,
     snitchWheelContext: s.snitchWheelContext ?? 'seeker',
@@ -447,9 +435,9 @@ function evaluateSnitchAfterTurnComplete(s: GS): Partial<GS> {
   let turnsCompleted = getSnitchWaitTurnsCompleted(s)
 
   if (turnsCompleted === undefined) {
-    console.log('[SNITCH] Turn ended with seekers on snitch — wait timer started (0/2 turns)')
+    console.log('[SNITCH] Turn ended with seekers on snitch — wait timer started (-1/2 turns, need 2 full moves)')
     return {
-      snitchWaitTurnsCompleted: 0,
+      snitchWaitTurnsCompleted: -1,
       snitchEncounterPending: true,
       snitchEncounterDelayTurns: undefined,
       snitchWheelContext: s.snitchWheelContext ?? 'seeker',
@@ -457,12 +445,12 @@ function evaluateSnitchAfterTurnComplete(s: GS): Partial<GS> {
   }
 
   const nextTurns = turnsCompleted + 1
-  if (nextTurns >= 2) {
-    console.log('[SNITCH] Full turn requirement met — triggering encounter wheel')
+  if (nextTurns >= 1) {  // Changed from >= 2 to >= 1 (since we start at -1: -1 -> 0 -> 1 = 2 moves)
+    console.log('[SNITCH] Full turn requirement met (2 moves completed) — triggering encounter wheel')
     return triggerSnitchEncounterPhase(s)
   }
 
-  console.log('[SNITCH] Snitch wait progress:', nextTurns, '/ 2 completed turns')
+  console.log('[SNITCH] Snitch wait progress:', nextTurns, '/ 1 (started at -1, need 2 full moves)')
   return {
     snitchWaitTurnsCompleted: nextTurns,
     snitchEncounterPending: true,
@@ -475,7 +463,7 @@ function isSnitchEncounterReady(s: GS): boolean {
   if (seekersOnSnitch(s.pieces, s.snitchPos).length === 0) return false
   const turns = getSnitchWaitTurnsCompleted(s)
   if (turns === undefined) return false
-  if (turns >= 2) return true
+  if (turns >= 1) return true  // Changed from >= 2 to >= 1
   // Legacy persisted state: delay=1 means one turn already completed
   if (s.snitchEncounterDelayTurns === 1 && turns >= 1) return true
   return false
@@ -1022,14 +1010,16 @@ function reduce(s: GS, a: Act): GS {
       if (s.snitchPhase !== 'spinning' || !s.snitchTarget) return s
       const landingSeekers = seekersOnSnitch(s.pieces, s.snitchTarget)
       
-      // If seekers are already on the landing square, determine delay needed
+      // If seekers are already on the landing square, START wait counter at -1
+      // This means it will take 2 FULL moves before triggering (0 -> 1 -> 2)
       if (landingSeekers.length > 0) {
+        console.log('[SNITCH_LAND] Seekers already on square, starting wait counter at -1 (need 2 full moves)')
         return {
           ...s,
           snitchPos: s.snitchTarget,
           snitchPhase: 'active',
           snitchEncounterPending: true,
-          snitchWaitTurnsCompleted: 0,
+          snitchWaitTurnsCompleted: -1,  // Changed from 0 to -1
           snitchEncounterDelayTurns: undefined,
           snitchWheelContext: 'seeker',
           snitchRecentSquares: [...(s.snitchRecentSquares ?? []), `${s.snitchTarget.col}${s.snitchTarget.row}`].slice(-3),
@@ -1686,7 +1676,7 @@ const SnitchWheel = React.memo(function SnitchWheel({
 
   useEffect(() => {
     if (!spinning || spinAngle <= 0) return
-    const duration = 10000 // Same duration as CombatWheel
+    const duration = 2000 // Changed from 10000ms (10s) to 2000ms (2s) for faster animation
     const startTime = performance.now()
     let raf: number
     function ease(t: number): number {
@@ -2574,7 +2564,7 @@ function GamePageInner() {
       console.log('[SNITCH] Waiting for combat to finish before SNITCH_LAND')
       return
     }
-    const t = setTimeout(() => emit({ kind: 'SNITCH_LAND' }), 10200) // Same timing as CombatWheel
+    const t = setTimeout(() => emit({ kind: 'SNITCH_LAND' }), 2200) // Changed from 10200ms to 2200ms (2s animation + 200ms buffer)
     return () => clearTimeout(t)
   }, [gs.snitchPhase, gs.combat, myTeam, emit])
 
